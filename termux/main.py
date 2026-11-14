@@ -41,6 +41,9 @@ MODEL = "openai/gpt-oss-120b"            # faster: "openai/gpt-oss-20b"
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MY_NAME = "Aadin"
 CHAT_LOAD_DELAY = 3.0                    # seconds to let WhatsApp open the chat
+GO_HOME_AFTER_SEND = True                # leave WhatsApp after sending, so it
+                                         # keeps posting notifications
+AFTER_SEND_DELAY = 1.5                   # seconds to let the message go out
 ALLOWED_SENDERS = []                     # e.g. ["Amma"]; empty list = anyone
 
 POLL_INTERVAL = 4                        # standby: seconds between checks
