@@ -219,6 +219,7 @@ def handle_message(key, sender, message):
     open_chat(phone, reply)
     time.sleep(CHAT_LOAD_DELAY)
     press_send()
+    leave_chat()
     send_notification("Auto-replied", f"To {sender}: {reply}")
     return True
 
