@@ -153,9 +153,46 @@ def press_send():
     print("send ->", out.splitlines()[-1] if out else "no output")
 
 
+def get_opt(flag):
+    """Return the value after `flag` in argv, or None if flag isn't used."""
+    if flag not in sys.argv:
+        return None
+    i = sys.argv.index(flag)
+    if i + 1 >= len(sys.argv):
+        sys.exit(f"{flag} needs a value.")
+    return sys.argv[i + 1]
+
+
+def force_send(number, incoming, literal_text):
+    """Testing mode: skip notifications and send to `number` right now."""
+    phone = to_digits(number)
+    if len(phone) < 8:
+        sys.exit(f"'{number}' doesn't look like a valid number.")
+
+    if literal_text:
+        reply = literal_text
+    else:
+        key = load_key()
+        if not key:
+            sys.exit("No Groq key. Put it in ~/.groq_key (see README).")
+        reply = ai_reply(key, number, incoming)
+    print("Reply:", reply)
+    if not reply:
+        sys.exit("No reply generated.")
+
+    open_chat(phone, reply)
+    time.sleep(CHAT_LOAD_DELAY)
+    press_send()
+
+
 def main():
     if "--send-only" in sys.argv:
         press_send()
+        return
+
+    number = get_opt("--force")
+    if number:
+        force_send(number, get_opt("--msg") or "hey", get_opt("--text"))
         return
 
     key = load_key()
