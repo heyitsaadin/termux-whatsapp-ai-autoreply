@@ -253,9 +253,11 @@ public class SendIME extends InputMethodService {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.parseColor("#202124"));
         root.setPadding(dp(3), dp(3), dp(3), dp(3));
-        // fixed height so it never fills the screen
+        // the system wraps this view with WRAP_CONTENT, so height comes from
+        // the five fixed-height rows (5 x 48dp + padding)
         root.setLayoutParams(new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(270)));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
         rebuild();
         return root;
     }
