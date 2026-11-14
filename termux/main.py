@@ -140,8 +140,12 @@ def open_chat(phone, text=""):
 
 def press_send():
     """Ask the SendKB keyboard to press Enter in the focused text box."""
-    run(["am", "broadcast", "-a", "com.aadin.sendkb.SEND",
-         "-p", "com.aadin.sendkb"])
+    r = subprocess.run(["am", "broadcast", "-a", "com.aadin.sendkb.SEND",
+                        "-p", "com.aadin.sendkb"],
+                       capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip()
+    # the keyboard answers with data="OK: ..." or data="FAIL: ..."
+    print("send ->", out.splitlines()[-1] if out else "no output")
 
 
 def main():
