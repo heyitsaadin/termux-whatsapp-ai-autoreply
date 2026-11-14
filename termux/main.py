@@ -11,6 +11,11 @@ WhatsApp AI auto-reply for Termux.
 Usage:
     python main.py              full run
     python main.py --send-only  just press send (to test the keyboard)
+    python main.py --force 9876543210
+                                skip notifications, AI-reply to "hey" and send
+                                to that number right now (for testing)
+      optional: --msg "text"    the incoming message the AI replies to
+                --text "text"   send this exact text instead of an AI reply
 """
 import json
 import os
