@@ -23,6 +23,11 @@ Usage:
 Standby extras:
     python main.py --standby --fg   run in the foreground (see live output)
     tail -f ~/wa_autoreply.log      watch the background log
+
+While standby is on, the SendKB "chat watcher" accessibility service (see
+README) also answers messages that arrive while you have the chat OPEN, which
+notifications can't see. It talks to a tiny server this script runs on
+127.0.0.1:8765.
 """
 import json
 import os
@@ -30,9 +35,11 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote
 
 # ---------------- settings ----------------
@@ -49,6 +56,8 @@ ALLOWED_SENDERS = []                     # e.g. ["Amma"]; empty list = anyone
 POLL_INTERVAL = 4                        # standby: seconds between checks
 REPLY_COOLDOWN = 20                      # standby: min seconds between replies
                                          # to the same sender (stops bot loops)
+SERVER_PORT = 8765                       # standby: port the SendKB chat watcher
+                                         # uses (must match ChatWatcher.java)
 PID_FILE = os.path.expanduser("~/.wa_autoreply.pid")
 LOG_FILE = os.path.expanduser("~/wa_autoreply.log")
 STANDBY_NOTIF_ID = "wa-standby"
@@ -136,16 +145,30 @@ def find_number(name):
     return None
 
 
-def ai_reply(key, sender, message):
+def ai_reply(key, sender, message, history=None):
+    """history: optional earlier messages, [{"from": "me"|"them", "text": ...}]"""
+    turns = []
+    for h in history or []:
+        if not isinstance(h, dict):
+            continue
+        text = str(h.get("text") or "").strip()
+        if text:
+            role = "assistant" if h.get("from") == "me" else "user"
+            turns.append({"role": role, "content": text})
+
+    system = (f"You are {MY_NAME} replying to a WhatsApp message from "
+              f"{sender}. Reply in 1-2 short, casual sentences, in the "
+              "same language as the message. Output only the reply text.")
+    if turns:
+        system += (" The earlier messages are your recent chat with them "
+                   "(the assistant turns are what you already said): stay "
+                   "consistent and don't repeat yourself.")
+
     body = json.dumps({
         "model": MODEL,
-        "messages": [
-            {"role": "system", "content":
-                f"You are {MY_NAME} replying to a WhatsApp message from "
-                f"{sender}. Reply in 1-2 short, casual sentences, in the "
-                "same language as the message. Output only the reply text."},
-            {"role": "user", "content": message},
-        ],
+        "messages": [{"role": "system", "content": system}]
+                    + turns
+                    + [{"role": "user", "content": message}],
         "reasoning_effort": "low",
         "max_tokens": 600,
     }).encode()
@@ -226,6 +249,9 @@ def handle_message(key, sender, message):
 
 # ---------------- standby mode ----------------
 
+last_reply = {}                      # sender -> time of our last reply
+
+
 def running_pid():
     """PID of a running standby process, or None."""
     try:
@@ -251,6 +277,84 @@ def msg_sig(n):
     return (n.get("title"), n.get("content"), str(n.get("when", "")))
 
 
+def reply_for_open_chat(key, sender, message, history):
+    """Reply text for a message the chat watcher saw in an OPEN chat.
+
+    Returns None to stay quiet. The chat watcher types and sends the text
+    itself, so nothing is opened or sent from here.
+    """
+    if not sender or not message:
+        return None
+    if ALLOWED_SENDERS and sender not in ALLOWED_SENDERS:
+        print(f"[open chat] {sender} is not in ALLOWED_SENDERS, skipping.",
+              flush=True)
+        return None
+    if not find_number(sender):
+        print(f"[open chat] No phone number for {sender} (group chat?), "
+              "skipping.", flush=True)
+        return None
+
+    # same loop guard as the notification path; waiting is fine here because
+    # the watcher just holds the request open
+    wait = REPLY_COOLDOWN - (time.time() - last_reply.get(sender, 0))
+    if wait > 0:
+        time.sleep(wait)
+
+    print(f"[open chat] {sender}: {message}", flush=True)
+    send_notification("Automated Reply", f"Generating reply to {sender}...")
+    reply = ai_reply(key, sender, message, history)
+    print("AI reply:", reply, flush=True)
+    if reply:
+        last_reply[sender] = time.time()
+        send_notification("Replying in open chat", f"{sender}: {reply}")
+    return reply
+
+
+def start_reply_server(key):
+    """Tiny local server the SendKB chat watcher talks to.
+
+    POST /reply {sender, message, history} -> {"reply": text or null}
+    POST /log   {text}                     -> prints it to the log
+    """
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, obj, code=200):
+            data = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self):
+            try:
+                size = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(size) or b"{}")
+            except ValueError:
+                return self._send({"error": "bad json"}, 400)
+            try:
+                if self.path == "/log":
+                    print("[app]", data.get("text", ""), flush=True)
+                    return self._send({"ok": True})
+                if self.path == "/reply":
+                    reply = reply_for_open_chat(
+                        key,
+                        str(data.get("sender") or "").strip(),
+                        str(data.get("message") or "").strip(),
+                        data.get("history") or [])
+                    return self._send({"reply": reply})
+            except Exception as e:
+                print("Server error:", e, flush=True)
+                return self._send({"reply": None}, 500)
+            self._send({"error": "not found"}, 404)
+
+        def log_message(self, *args):
+            pass                     # keep the log quiet
+
+    server = ThreadingHTTPServer(("127.0.0.1", SERVER_PORT), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def standby_loop():
     """Watch for new WhatsApp notifications and auto-reply to each one."""
     key = load_key()
@@ -270,12 +374,19 @@ def standby_loop():
          "--title", "WhatsApp AI standby",
          "--content", "Listening for new messages",
          "--ongoing", "--priority", "low"])
+
+    server = None
+    try:
+        server = start_reply_server(key)
+        print(f"Open-chat server on 127.0.0.1:{SERVER_PORT}", flush=True)
+    except OSError as e:
+        print(f"Could not start the open-chat server ({e}); replies to "
+              "open chats are off, notifications still work.", flush=True)
     print(f"Standby on (PID {os.getpid()}), checking every {POLL_INTERVAL}s",
           flush=True)
 
     # whatever is already in the tray now is old news: don't answer it
     seen = {msg_sig(n) for n in (whatsapp_msgs() or [])}
-    last_reply = {}                  # sender -> time of our last reply
     read_ok = True
 
     try:
@@ -313,6 +424,9 @@ def standby_loop():
     except KeyboardInterrupt:
         pass
     finally:
+        if server:
+            server.shutdown()
+            server.server_close()
         run(["termux-wake-unlock"])
         run(["termux-notification-remove", STANDBY_NOTIF_ID])
         clear_pid_file()
