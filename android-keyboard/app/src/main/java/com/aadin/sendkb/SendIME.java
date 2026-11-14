@@ -11,10 +11,13 @@ import android.inputmethodservice.InputMethodService;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -25,6 +28,8 @@ import android.widget.LinearLayout;
  *
  *   am broadcast -a com.aadin.sendkb.SEND -p com.aadin.sendkb
  *   am broadcast -a com.aadin.sendkb.TYPE -p com.aadin.sendkb --es text "hello"
+ *
+ * The broadcast output ends with data="..." telling you what happened.
  *
  * The layout is written from scratch (plain Android views). It is inspired by
  * the usual phone QWERTY layout; no FlorisBoard code is copied.
@@ -60,14 +65,22 @@ public class SendIME extends InputMethodService {
 
     // ---------- commands from Termux ----------
     private final BroadcastReceiver rx = new BroadcastReceiver() {
+        private void reply(String msg) {
+            if (isOrderedBroadcast()) setResultData(msg);
+        }
+
         @Override public void onReceive(Context c, Intent i) {
             InputConnection ic = getCurrentInputConnection();
-            if (ic == null) return;
+            if (ic == null) {
+                reply("FAIL: no input connection (focus a text box with Send Keyboard active)");
+                return;
+            }
             if (SEND.equals(i.getAction())) {
-                pressKey(KeyEvent.KEYCODE_ENTER);
+                reply(doSend());
             } else if (TYPE.equals(i.getAction())) {
                 String t = i.getStringExtra("text");
                 if (t != null) ic.commitText(t, 1);
+                reply("typed");
             }
         }
     };
@@ -98,11 +111,37 @@ public class SendIME extends InputMethodService {
         return (int) (v * getResources().getDisplayMetrics().density);
     }
 
+    /** A key press with real timestamps and the soft-keyboard flag, which apps expect. */
     private void pressKey(int code) {
         InputConnection ic = getCurrentInputConnection();
         if (ic == null) return;
-        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
-        ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
+        long now = SystemClock.uptimeMillis();
+        int flags = KeyEvent.FLAG_SOFT_KEYBOARD | KeyEvent.FLAG_KEEP_TOUCH_MODE;
+        ic.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, 0,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags));
+        ic.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, 0,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, 0, flags));
+    }
+
+    /**
+     * Send the message. First choice is the text box's own action (Send/Go/Done),
+     * which is what WhatsApp's "Enter is send" uses. Fallback is an Enter key press.
+     */
+    private String doSend() {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic == null) return "FAIL: no input connection";
+        EditorInfo ei = getCurrentInputEditorInfo();
+        if (ei != null && (ei.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0) {
+            int action = ei.imeOptions & EditorInfo.IME_MASK_ACTION;
+            if (action != EditorInfo.IME_ACTION_NONE
+                    && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+                if (ic.performEditorAction(action)) {
+                    return "OK: editor action " + action;
+                }
+            }
+        }
+        pressKey(KeyEvent.KEYCODE_ENTER);
+        return "OK: enter key (no editor action; WhatsApp 'Enter is send' must be on)";
     }
 
     private void typeText(String s) {
@@ -244,7 +283,7 @@ public class SendIME extends InputMethodService {
         r4.addView(key(",", 1f, "#3C4043", v -> typeText(",")));
         r4.addView(key("space", 4f, "#3C4043", v -> typeText(" ")));
         r4.addView(key(".", 1f, "#3C4043", v -> typeText(".")));
-        r4.addView(key("\u21B5", 1.5f, "#1A73E8", v -> pressKey(KeyEvent.KEYCODE_ENTER)));
+        r4.addView(key("\u21B5", 1.5f, "#1A73E8", v -> doSend()));
         root.addView(r4);
     }
 
@@ -262,8 +301,7 @@ public class SendIME extends InputMethodService {
         return root;
     }
 
-    @Override public void onStartInputView(android.view.inputmethod.EditorInfo info,
-                                           boolean restarting) {
+    @Override public void onStartInputView(EditorInfo info, boolean restarting) {
         super.onStartInputView(info, restarting);
         shift = false;
         symbols = false;
