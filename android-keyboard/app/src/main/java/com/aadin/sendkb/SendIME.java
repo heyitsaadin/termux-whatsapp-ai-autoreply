@@ -160,8 +160,9 @@ public class SendIME extends InputMethodService {
     private LinearLayout row() {
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
+        // fixed row height (no weights), so the keyboard can't stretch
         r.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
         return r;
     }
 
