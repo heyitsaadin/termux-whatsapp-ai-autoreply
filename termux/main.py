@@ -187,6 +187,19 @@ def press_send():
     print("send ->", out.splitlines()[-1] if out else "no output")
 
 
+def leave_chat():
+    """Go back to the home screen after sending.
+
+    WhatsApp posts no notification for a chat that is open on screen, so
+    leaving it open makes standby miss every message that follows.
+    """
+    if not GO_HOME_AFTER_SEND:
+        return
+    time.sleep(AFTER_SEND_DELAY)
+    run(["am", "start", "-a", "android.intent.action.MAIN",
+         "-c", "android.intent.category.HOME"])
+
+
 def handle_message(key, sender, message):
     """Reply to one message. Returns True if a reply was sent."""
     if ALLOWED_SENDERS and sender not in ALLOWED_SENDERS:
