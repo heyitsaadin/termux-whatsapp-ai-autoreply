@@ -108,6 +108,37 @@ python main.py
 
 If the keyboard is not selected at that moment, the chat opens with the reply typed in but does not send. Select the keyboard, then run `python main.py --send-only`.
 
+## Standby mode (background)
+
+```
+python main.py --standby     # start in the background
+python main.py --stop        # stop it
+tail -f ~/wa_autoreply.log   # live log
+```
+
+Checks your WhatsApp notifications every few seconds and answers each new one. After sending it returns to the home screen, because WhatsApp posts no notification for a chat that is open on screen.
+
+## Replying while a chat is open (chat watcher)
+
+SendKB also contains an accessibility service, **Send Keyboard chat watcher**. It reads the WhatsApp chat you have open, asks the standby script for a reply (over `127.0.0.1:8765`, never leaves your phone), types it into the message box and taps send. The keyboard does not need to be switched for this.
+
+Setup:
+
+1. Rebuild the APK (Actions -> build-apk) and install it. If Android reports a conflict with the installed SendKB, uninstall the old one first and re-enable the keyboard.
+2. Android 13+: Settings -> Apps -> Send Keyboard -> three dots -> **Allow restricted settings**.
+3. Settings -> Accessibility -> Installed apps -> **Send Keyboard chat watcher** -> turn on.
+4. Run `python main.py --standby`.
+
+How it behaves:
+
+- Only active while standby is running, and only inside WhatsApp.
+- Messages already on screen when you open a chat are never answered.
+- Ignored while you are scrolled up reading old messages.
+- Never overwrites text you have typed in the message box.
+- Group chats and senders outside `ALLOWED_SENDERS` are skipped.
+- The AI sees the last few messages of the chat as context.
+- If nothing happens, look for lines starting with `[app]` in the log. If WhatsApp changed its layout they list the view ids that were seen.
+
 ## Commands the keyboard accepts
 
 ```
