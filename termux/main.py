@@ -377,6 +377,7 @@ def force_send(number, incoming, literal_text):
     open_chat(phone, reply)
     time.sleep(CHAT_LOAD_DELAY)
     press_send()
+    leave_chat()
 
 
 def main():
