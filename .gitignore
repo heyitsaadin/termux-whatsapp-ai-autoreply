@@ -1,0 +1,7 @@
+.gradle/
+build/
+*.apk
+local.properties
+.groq_key
+*.key
+__pycache__/
