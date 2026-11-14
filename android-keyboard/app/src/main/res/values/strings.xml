@@ -1,4 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="chat_watcher_desc">Watches the open WhatsApp chat so the Termux auto-reply script can answer new messages while you are looking at the chat. Only runs inside WhatsApp and only talks to your own phone (127.0.0.1).</string>
-</resources>

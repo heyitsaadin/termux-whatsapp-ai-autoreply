@@ -1,26 +1,25 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
-    <application android:label="Send Keyboard"
-        android:usesCleartextTraffic="true">
-        <service android:name=".SendIME"
-            android:label="Send Keyboard"
-            android:permission="android.permission.BIND_INPUT_METHOD"
+    <application android:label="Status Auto-Reply">
+
+        <!-- tap the app icon: shows the current auto-reply and opens
+             Notification access if it is not turned on yet -->
+        <activity android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <service android:name=".ReplyListener"
+            android:label="Status Auto-Reply"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.view.InputMethod"/>
+                <action android:name="android.service.notification.NotificationListenerService"/>
             </intent-filter>
-            <meta-data android:name="android.view.im"
-                android:resource="@xml/method"/>
-        </service>
-        <service android:name=".ChatWatcher"
-            android:label="Send Keyboard chat watcher"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService"/>
-            </intent-filter>
-            <meta-data android:name="android.accessibilityservice"
-                android:resource="@xml/chat_watcher"/>
         </service>
     </application>
 </manifest>
