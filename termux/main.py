@@ -3,7 +3,7 @@
 AI helper for the Status Auto-Reply app.
 
 The Android app answers the FIRST message from each person with a fixed line
-built from your /tag status. When that person sends a real follow-up, the app
+built from the status you set in the app. When that person sends a real follow-up, the app
 asks this script what to say. The script runs a tiny server on 127.0.0.1 that
 only the app calls, so your Groq key never leaves Termux.
 
