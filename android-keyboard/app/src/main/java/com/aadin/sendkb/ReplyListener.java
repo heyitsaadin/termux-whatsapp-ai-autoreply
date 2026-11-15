@@ -93,8 +93,10 @@ public class ReplyListener extends NotificationListenerService {
 
     @Override public void onListenerConnected() {
         super.onListenerConnected();
-        KeepAliveService.start(this);
-        if (DEBUG) toast("Status auto-reply is on");
+        if (Prefs.isEnabled(this)) {
+            KeepAliveService.start(this);
+            if (DEBUG) toast("Status auto-reply is on");
+        }
     }
 
     @Override public void onListenerDisconnected() {
