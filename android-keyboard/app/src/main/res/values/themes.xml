@@ -1,0 +1,4 @@
+<resources>
+    <!-- Material 3 Expressive, with the wallpaper colours on Android 12+ -->
+    <style name="Theme.StatusReply" parent="Theme.Material3Expressive.DynamicColors.DayNight.NoActionBar" />
+</resources>
