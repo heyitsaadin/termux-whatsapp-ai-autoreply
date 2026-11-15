@@ -317,8 +317,8 @@ public class MainActivity extends AppCompatActivity {
             try {
                 Status.Info info = Status.current(app);
                 if (info == null) {
-                    value = "No tag set";
-                    reply = "No status tag is set, so nobody gets an auto-reply.";
+                    value = "No status set";
+                    reply = "Nobody gets an auto-reply until you set a status. Tap Set status below.";
                 } else {
                     value = Character.toUpperCase(info.what.charAt(0)) + info.what.substring(1);
                     reply = "Everyone gets:\n" + info.reply;
