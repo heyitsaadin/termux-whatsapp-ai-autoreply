@@ -228,7 +228,8 @@ public class ReplyListener extends NotificationListenerService {
                 if (c.followups >= MAX_FOLLOWUPS) { skip("already answered " + chat + " enough"); return; }
             }
             try {
-                reply = Ai.ask(chat, text, st.what, history);
+                reply = Ai.ask(chat, text, st.what, Prefs.getName(getApplicationContext()),
+                        st.reply, history);
             } catch (Exception e) {
                 Log.w(TAG, "AI helper not reachable", e);
                 skip("Termux AI helper isn't running (python main.py --standby)");
