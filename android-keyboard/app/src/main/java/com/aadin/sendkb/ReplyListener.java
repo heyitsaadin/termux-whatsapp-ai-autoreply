@@ -113,6 +113,7 @@ public class ReplyListener extends NotificationListenerService {
 
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null || !WHATSAPP.equals(sbn.getPackageName())) return;
+        if (!Prefs.isEnabled(this)) return;   // paused from the app's Stop button
 
         // keep the CPU awake until the reply is out, even with the screen off
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
