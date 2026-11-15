@@ -1,0 +1,33 @@
+name: release-apk
+
+# Publish a release on GitHub (Releases > Draft a new release) and this builds
+# the app and attaches status-auto-reply.apk to it, so anyone can download it.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.13
+      - name: Build debug APK
+        working-directory: android-keyboard
+        run: gradle assembleDebug
+      - name: Attach the APK to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cp android-keyboard/app/build/outputs/apk/debug/app-debug.apk status-auto-reply.apk
+          gh release upload "${{ github.event.release.tag_name }}" status-auto-reply.apk --clobber
