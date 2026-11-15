@@ -16,33 +16,20 @@ import android.service.notification.StatusBarNotification;
 import android.util.Log;
 import android.widget.Toast;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Answers WhatsApp message notifications without opening WhatsApp, by tapping
  * the notification's own "Reply" button.
  *
- *  1st message from someone (or status changed, or 30 min passed):
- *      the fixed line, e.g. "Sam is at school, pls message later."
- *  Later messages from the same person:
- *      spam / filler is ignored; a real message goes to the AI helper in
- *      Termux, which knows your status and the chat so far, and either
- *      writes a short custom reply or decides none is needed.
+ *   message arrives -> WhatsApp notification -> this service -> Reply button
  *
  * Rules:
  *  - one-to-one chats only (groups are skipped)
- *  - no status tag set  ->  no reply (that is the off switch)
- *  - at most MAX_FOLLOWUPS AI replies per person per notice window
- *  - never two sends to the same chat within MIN_GAP_MS
+ *  - no status set, or Stop pressed in the app -> no reply
+ *  - each person gets the note once; again only if your status changes or
+ *    after NOTICE_COOLDOWN_MS
  *  - it only sees messages that raise a notification (not a chat that is
  *    open on screen)
  *
@@ -50,23 +37,15 @@ import java.util.concurrent.Executors;
  * service, a message is still only answered once.
  */
 public class ReplyListener extends NotificationListenerService {
-    private static final String TAG = "StatusReply";
+    private static final String TAG = "WhatsAppAutomation";
     private static final String WHATSAPP = "com.whatsapp";
 
-    private static final long NOTICE_COOLDOWN_MS = 30L * 60 * 1000;  // fixed line: once per window
-    private static final long MIN_GAP_MS = 8_000L;                    // never 2 sends this close
+    private static final long NOTICE_COOLDOWN_MS = 30L * 60 * 1000;  // one note per person per window
     private static final long DUP_WINDOW_MS = 30_000L;               // same text re-posted
-    private static final int MAX_FOLLOWUPS = 3;                      // AI replies per window
-    private static final int HISTORY_MAX = 10;                       // turns the AI remembers
-    private static final long WAKE_LOCK_MS = 75_000L;
+    private static final long WAKE_LOCK_MS = 10_000L;
 
     /** Set to true to get a small toast explaining every skipped notification. */
     private static final boolean DEBUG = false;
-
-    /** Messages that never deserve an AI call. */
-    private static final Set<String> FILLER = new HashSet<>(Arrays.asList(
-            "hi", "hii", "hiii", "hello", "hlo", "hey", "hmm", "ok", "okay", "kk",
-            "yes", "no", "thanks", "thank you", "thx", "test", "ping", "oi"));
 
     /** What we remember about one chat. Always access under synchronized (chat). */
     private static final class Chat {
@@ -74,28 +53,19 @@ public class ReplyListener extends NotificationListenerService {
         String lastIncoming = "";
         long lastIncomingAt;
         String lastReplyText = "";      // last thing we sent (to spot the echo)
-        long lastSendAt;
-        String noticeStatus = "";       // status the fixed line was sent for
+        String noticeStatus = "";       // status the note was sent for
         long noticeAt;
-        int followups;
-        final ArrayList<String[]> history = new ArrayList<>();   // {"them"|"me", text}
-
-        void remember(String who, String text) {
-            history.add(new String[] { who, text });
-            while (history.size() > HISTORY_MAX) history.remove(0);
-        }
     }
 
     private static final Map<String, Chat> CHATS = new ConcurrentHashMap<>();
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
     @Override public void onListenerConnected() {
         super.onListenerConnected();
         if (Prefs.isEnabled(this)) {
             KeepAliveService.start(this);
-            if (DEBUG) toast("Status auto-reply is on");
+            if (DEBUG) toast("WhatsApp Automation is on");
         }
     }
 
@@ -106,169 +76,82 @@ public class ReplyListener extends NotificationListenerService {
         }
     }
 
-    @Override public void onDestroy() {
-        worker.shutdownNow();
-        super.onDestroy();
-    }
-
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null || !WHATSAPP.equals(sbn.getPackageName())) return;
         if (!Prefs.isEnabled(this)) return;   // paused from the app's Stop button
 
         // keep the CPU awake until the reply is out, even with the screen off
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        final PowerManager.WakeLock wl =
-                pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StatusReply:answer");
+        PowerManager.WakeLock wl =
+                pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WhatsAppAutomation:reply");
         wl.acquire(WAKE_LOCK_MS);
-
-        boolean handedOff = false;
         try {
-            handedOff = handle(sbn, wl);
+            handle(sbn);
         } catch (Exception e) {
             Log.e(TAG, "handle failed", e);
         } finally {
-            if (!handedOff) release(wl);
+            release(wl);
         }
     }
 
-    /** Returns true when the work was handed to the worker (which releases the lock). */
-    private boolean handle(StatusBarNotification sbn, final PowerManager.WakeLock wl) {
+    private void handle(StatusBarNotification sbn) {
         Notification n = sbn.getNotification();
-        if (n == null || n.extras == null) return false;
-        if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return false;
+        if (n == null || n.extras == null) return;
+        if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return;
 
         Bundle x = n.extras;
         CharSequence title = x.getCharSequence(Notification.EXTRA_TITLE);
-        final String chat = (title == null) ? "" : title.toString().trim();
-        if (chat.isEmpty()) return false;
+        String chat = (title == null) ? "" : title.toString().trim();
+        if (chat.isEmpty()) return;
 
-        if (isGroup(x, chat)) { skip("group chat"); return false; }
+        if (isGroup(x, chat)) { skip("group chat"); return; }
 
-        final Notification.Action action = findReplyAction(n);
-        if (action == null) { skip("no reply button (" + chat + ")"); return false; }
+        Notification.Action action = findReplyAction(n);
+        if (action == null) { skip("no reply button (" + chat + ")"); return; }
 
-        final String text = newestText(x);
-        if (text == null) { skip("no message text"); return false; }
+        String text = newestText(x);
+        if (text == null) { skip("no message text"); return; }
 
         Chat c = CHATS.computeIfAbsent(chat, k -> new Chat());
         long now = System.currentTimeMillis();
+        String reply;
         synchronized (c) {
             // WhatsApp re-posts notifications often: handle each message once
             String sig = newestTime(x, n) + "|" + text;
-            if (sig.equals(c.lastSig)) return false;
+            if (sig.equals(c.lastSig)) return;
             c.lastSig = sig;
 
             // our own reply can come back as the newest message
-            if (text.equals(c.lastReplyText)) { skip("that is our own reply"); return false; }
+            if (text.equals(c.lastReplyText)) { skip("that is our own reply"); return; }
 
             // same text again a moment later = a re-post with a new timestamp
-            if (text.equals(c.lastIncoming) && now - c.lastIncomingAt < DUP_WINDOW_MS) return false;
+            if (text.equals(c.lastIncoming) && now - c.lastIncomingAt < DUP_WINDOW_MS) return;
             c.lastIncoming = text;
             c.lastIncomingAt = now;
-            c.remember("them", text);
-        }
 
-        worker.execute(() -> {
-            try {
-                answer(chat, action, text);
-            } finally {
-                release(wl);
-            }
-        });
-        return true;
-    }
+            Status.Info st = Status.current(getApplicationContext());
+            if (st == null) { skip("no status set"); return; }
 
-    private void answer(String chat, Notification.Action action, String text) {
-        Chat c = CHATS.get(chat);
-        if (c == null) return;
+            boolean alreadyTold = st.what.equals(c.noticeStatus)
+                    && now - c.noticeAt < NOTICE_COOLDOWN_MS;
+            if (alreadyTold) { skip(chat + " already got this reply"); return; }
 
-        // a second message right behind our reply waits instead of being lost
-        long wait;
-        synchronized (c) {
-            wait = MIN_GAP_MS - (System.currentTimeMillis() - c.lastSendAt);
-        }
-        if (wait > 0) {
-            try {
-                Thread.sleep(wait);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
-
-        Status.Info st;
-        try {
-            st = Status.current(getApplicationContext());
-        } catch (Exception e) {
-            Log.w(TAG, "could not read status", e);
-            toast("Auto-reply: couldn't read your status");
-            return;
-        }
-        if (st == null) { skip("no status tag set"); return; }
-
-        boolean needNotice;
-        List<String[]> history;
-        synchronized (c) {
-            long now = System.currentTimeMillis();
-            needNotice = !(st.what.equals(c.noticeStatus) && now - c.noticeAt < NOTICE_COOLDOWN_MS);
-            if (needNotice) c.followups = 0;
-            history = new ArrayList<>(c.history);
-            // the newest "them" entry is the message being answered itself
-            if (!history.isEmpty() && history.get(history.size() - 1)[0].equals("them")) {
-                history.remove(history.size() - 1);
-            }
-        }
-
-        String reply;
-        if (needNotice) {
+            // reserve it before sending, so a second post can't send it again
+            c.lastReplyText = st.reply;
+            c.noticeStatus = st.what;
+            c.noticeAt = now;
             reply = st.reply;
-        } else {
-            if (looksLikeSpam(text)) { skip("not worth a reply: " + text); return; }
-            synchronized (c) {
-                if (c.followups >= MAX_FOLLOWUPS) { skip("already answered " + chat + " enough"); return; }
-            }
-            try {
-                reply = Ai.ask(chat, text, st.what, Prefs.getName(getApplicationContext()),
-                        st.reply, history);
-            } catch (Exception e) {
-                Log.w(TAG, "AI helper not reachable", e);
-                skip("Termux AI helper isn't running (python main.py --standby)");
-                return;
-            }
-            if (reply == null) { skip("AI: no reply needed"); return; }
-        }
-
-        synchronized (c) {
-            long now = System.currentTimeMillis();
-            if (now - c.lastSendAt < MIN_GAP_MS) { skip("just replied to " + chat); return; }
-            c.lastSendAt = now;
-            c.lastReplyText = reply;
-            if (needNotice) {
-                c.noticeStatus = st.what;
-                c.noticeAt = now;
-            } else {
-                c.followups++;
-            }
-            c.remember("me", reply);
         }
 
         if (sendReply(action, reply)) {
-            toast((needNotice ? "Auto-replied to " : "AI replied to ") + chat);
+            toastIfDebug("Auto-replied to " + chat);
         } else {
             synchronized (c) {
-                c.lastSendAt = 0;
-                if (needNotice) c.noticeAt = 0; else c.followups--;
+                c.noticeStatus = "";
+                c.noticeAt = 0;
             }
             toast("Auto-reply to " + chat + " failed");
         }
-    }
-
-    /** Greetings, filler, emoji-only and media placeholders: not worth an AI call. */
-    private boolean looksLikeSpam(String text) {
-        String t = Status.clean(text).toLowerCase(Locale.ROOT);
-        if (t.length() < 3) return true;            // "k", "?", emoji only
-        if (FILLER.contains(t)) return true;
-        return t.matches("(photo|video|sticker|gif|audio|voice message|document|location|contact)[\\s\\d:().]*");
     }
 
     private static void release(PowerManager.WakeLock wl) {
@@ -356,6 +239,10 @@ public class ReplyListener extends NotificationListenerService {
 
     private void skip(String why) {
         if (DEBUG) toast("Auto-reply skipped: " + why);
+    }
+
+    private void toastIfDebug(String s) {
+        if (DEBUG) toast(s);
     }
 
     private void toast(final String s) {

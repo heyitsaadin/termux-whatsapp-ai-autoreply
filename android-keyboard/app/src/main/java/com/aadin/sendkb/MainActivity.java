@@ -1,8 +1,6 @@
 package com.aadin.sendkb;
 
 import android.Manifest;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -22,22 +20,15 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.color.MaterialColors;
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-
-import java.net.HttpURLConnection;
-import java.net.URL;
 
 /**
  * The app screen (Material 3 Expressive):
  *  - a big card with Start / Stop for the auto-reply
- *  - one row per permission / service, with its state and a button to fix it
- *  - the status tag the replies are built from
+ *  - one row per permission, with its state and a button to fix it
+ *  - the status the replies are built from
  */
 public class MainActivity extends AppCompatActivity {
-    private static final String HELPER_URL = "http://127.0.0.1:8765/";
-    private static final String HELPER_CMD = "python main.py --standby";
-
-    private static final int OK = 0, REQUIRED = 1, OPTIONAL = 2, CHECKING = 3;
+    private static final int OK = 0, REQUIRED = 1, OPTIONAL = 2;
 
     private static final int A_PRIMARY = androidx.appcompat.R.attr.colorPrimary;
     private static final int A_ERROR = androidx.appcompat.R.attr.colorError;
@@ -57,7 +48,6 @@ public class MainActivity extends AppCompatActivity {
     private View rowListener;
     private View rowBattery;
     private View rowNotif;
-    private View rowHelper;
     private TextView statusValue;
     private TextView statusReply;
     private int statusGen = 0;
@@ -74,14 +64,10 @@ public class MainActivity extends AppCompatActivity {
         rowListener = findViewById(R.id.rowListener);
         rowBattery = findViewById(R.id.rowBattery);
         rowNotif = findViewById(R.id.rowNotif);
-        rowHelper = findViewById(R.id.rowHelper);
         statusValue = findViewById(R.id.statusValue);
         statusReply = findViewById(R.id.statusReply);
 
-        findViewById(R.id.refreshStatus).setOnClickListener(v -> {
-            loadStatus();
-            loadHelper();
-        });
+        findViewById(R.id.refreshStatus).setOnClickListener(v -> loadStatus());
 
         findViewById(R.id.setTag).setOnClickListener(view ->
                 TagDialog.show(this, this::loadStatus));
@@ -92,7 +78,6 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         refresh();
         loadStatus();
-        loadHelper();
     }
 
     // ---------- state ----------
@@ -250,61 +235,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ---------- AI helper in Termux ----------
-
-    private void loadHelper() {
-        bindRow(rowHelper, "AI helper (Termux)", CHECKING, "Checking...", null, null);
-        new Thread(() -> {
-            boolean up = false;
-            try {
-                HttpURLConnection c = (HttpURLConnection) new URL(HELPER_URL).openConnection();
-                c.setConnectTimeout(800);
-                c.setReadTimeout(1500);
-                try {
-                    up = c.getResponseCode() == 200;
-                } finally {
-                    c.disconnect();
-                }
-            } catch (Exception ignored) {
-                // not running
-            }
-            final boolean ok = up;
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                bindRow(rowHelper, "AI helper (Termux)",
-                        ok ? OK : OPTIONAL,
-                        ok ? "Running. Follow-up messages get AI replies."
-                           : "Not running. The first reply still works; AI follow-ups are skipped.",
-                        "How to start", this::showHelperHelp);
-            });
-        }).start();
-    }
-
-    private void showHelperHelp() {
-        new MaterialAlertDialogBuilder(this)
-                .setTitle("Start the AI helper")
-                .setMessage("Open Termux and run:\n\n" + HELPER_CMD
-                        + "\n\nThe first reply to each person never needs it. Only AI follow-ups do.")
-                .setPositiveButton("Copy command", (d, w) -> {
-                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (cm != null) {
-                        cm.setPrimaryClip(ClipData.newPlainText("command", HELPER_CMD));
-                        toast("Copied");
-                    }
-                })
-                .setNeutralButton("Open Termux", (d, w) -> {
-                    Intent i = getPackageManager().getLaunchIntentForPackage("com.termux");
-                    if (i != null) {
-                        startActivity(i);
-                    } else {
-                        toast("Termux isn't installed");
-                    }
-                })
-                .setNegativeButton("Close", null)
-                .show();
-    }
-
-    // ---------- status tag ----------
+    // ---------- status ----------
 
     private void loadStatus() {
         statusValue.setText("Checking...");
@@ -325,7 +256,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             } catch (Exception e) {
                 value = "Can't read your status";
-                reply = "Check the internet connection and tap Refresh.";
+                reply = "Something went wrong. Tap Refresh to try again.";
             }
             final String v = value;
             final String r = reply;

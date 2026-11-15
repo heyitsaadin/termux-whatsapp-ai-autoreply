@@ -1,0 +1,47 @@
+name: CI
+
+# Builds a test APK on every push to main and on every pull request, so you
+# always know the app still compiles. The APK is attached to the run.
+# To publish a real release, use the "Release" workflow instead.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'LICENSE', 'assets/**']
+  pull_request:
+    paths-ignore: ['**.md', 'LICENSE', 'assets/**']
+  workflow_dispatch:
+
+# a newer push replaces a build that is still running
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # folder that holds the Gradle project
+  APP_DIR: android-keyboard
+
+jobs:
+  build:
+    name: Build test APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.13
+
+      - name: Build debug APK
+        working-directory: ${{ env.APP_DIR }}
+        run: gradle assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhatsApp-Automation-test-build
+          path: ${{ env.APP_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

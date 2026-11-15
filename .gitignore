@@ -2,6 +2,12 @@
 build/
 *.apk
 local.properties
-.groq_key
-*.key
-__pycache__/
+.idea/
+*.iml
+.DS_Store
+
+# release signing keys must never be committed (they live in GitHub Secrets)
+*.jks
+*.keystore
+# ...except the public debug key that signs CI test builds
+!**/debug.keystore

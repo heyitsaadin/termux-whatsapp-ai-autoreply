@@ -1,33 +1,123 @@
-name: release-apk
+name: Release
 
-# Publish a release on GitHub (Releases > Draft a new release) and this builds
-# the app and attaches status-auto-reply.apk to it, so anyone can download it.
+# Publishes a GitHub Release with the signed APK attached.
+#
+#   Easiest:  Actions > Release > Run workflow > type a version like 1.0.0
+#   Or:       git tag v1.0.0 && git push origin v1.0.0
+#   Or:       Releases > Draft a new release > create the tag v1.0.0 > Publish
+#
+# Signing: add the four KEYSTORE_* secrets described in the README
+# ("Releasing"). Without them the APK is signed with the public debug key,
+# which works but should not be what you give to other people.
 on:
-  release:
-    types: [published]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, like 1.0.0 (the tag v1.0.0 is created for you)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+env:
+  # folder that holds the Gradle project
+  APP_DIR: android-keyboard
+
 jobs:
-  apk:
+  release:
+    name: Build and publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="v${INPUT_VERSION#v}"
+          fi
+          VERSION="${TAG#v}"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "::error::'$VERSION' is not a version like 1.2.3"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.13
-      - name: Build debug APK
-        working-directory: android-keyboard
-        run: gradle assembleDebug
-      - name: Attach the APK to the release
+
+      - name: Prepare the release key
+        id: sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret found. Signing with the public debug key. See the README, 'Releasing'."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release APK
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: >
+          gradle assembleRelease --stacktrace
+          -PversionName=${{ steps.ver.outputs.version }}
+          -PversionCode=${{ steps.ver.outputs.code }}
+
+      - name: Name the APK and checksum it
+        id: apk
+        run: |
+          OUT="WhatsApp-Automation-${{ steps.ver.outputs.tag }}.apk"
+          cp "$APP_DIR/app/build/outputs/apk/release/app-release.apk" "$OUT"
+          sha256sum "$OUT" > "$OUT.sha256"
+          echo "file=$OUT" >> "$GITHUB_OUTPUT"
+          # show who signed it (informational)
+          TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)"
+          "${TOOLS}apksigner" verify --print-certs "$OUT" || true
+
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          FILE: ${{ steps.apk.outputs.file }}
+          SIGNED: ${{ steps.sign.outputs.signed }}
         run: |
-          cp android-keyboard/app/build/outputs/apk/debug/app-debug.apk status-auto-reply.apk
-          gh release upload "${{ github.event.release.tag_name }}" status-auto-reply.apk --clobber
+          SUM="$(cut -d' ' -f1 "$FILE.sha256")"
+          NOTES="Download **$FILE** below and open it on your phone. Setup steps are in the [README](https://github.com/$GITHUB_REPOSITORY#readme)."
+          NOTES="$NOTES"$'\n\n'"SHA-256: \`$SUM\`"
+          if [ "$SIGNED" != "true" ]; then
+            NOTES="$NOTES"$'\n\n'"> Built without a private release key (signed with the public debug key)."
+          fi
+          FLAGS=()
+          case "$TAG" in *-*) FLAGS+=(--prerelease) ;; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" "$FILE.sha256" --clobber
+          else
+            gh release create "$TAG" "$FILE" "$FILE.sha256" \
+              --title "WhatsApp Automation $TAG" \
+              --target "$GITHUB_SHA" \
+              --generate-notes --notes "$NOTES" \
+              "${FLAGS[@]}"
+          fi
