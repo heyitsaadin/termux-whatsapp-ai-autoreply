@@ -164,7 +164,9 @@ def make_handler(key):
                     return self._send({"reply": None})
                 print(f"[ask] {chat} ({status}): {message}", flush=True)
                 reply = ai_reply(key, chat, message, status,
-                                 data.get("history") or [])
+                                 data.get("history") or [],
+                                 str(data.get("name") or ""),
+                                 str(data.get("notice") or ""))
                 print("[ai]", reply if reply else NO_REPLY, flush=True)
                 return self._send({"reply": reply})
             except Exception as e:
