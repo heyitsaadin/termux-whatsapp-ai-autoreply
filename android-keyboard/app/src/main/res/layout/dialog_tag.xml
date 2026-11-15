@@ -14,7 +14,7 @@
         <TextView
             android:layout_width='match_parent'
             android:layout_height='wrap_content'
-            android:text='Quick tag'
+            android:text='Quick status'
             android:textAppearance='?attr/textAppearanceLabelLarge'
             android:textColor='?attr/colorOnSurfaceVariant' />
 
@@ -24,12 +24,6 @@
             android:layout_height='wrap_content'
             android:layout_marginTop='8dp'
             app:singleSelection='true'>
-
-            <com.google.android.material.chip.Chip
-                style='@style/Widget.Material3.Chip.Filter'
-                android:layout_width='wrap_content'
-                android:layout_height='wrap_content'
-                android:text='&#x1F4D6; Reading' />
 
             <com.google.android.material.chip.Chip
                 style='@style/Widget.Material3.Chip.Filter'
@@ -47,25 +41,31 @@
                 style='@style/Widget.Material3.Chip.Filter'
                 android:layout_width='wrap_content'
                 android:layout_height='wrap_content'
+                android:text='&#x1F4BC; At work' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
                 android:text='&#x2708;&#xFE0F; Travelling' />
 
             <com.google.android.material.chip.Chip
                 style='@style/Widget.Material3.Chip.Filter'
                 android:layout_width='wrap_content'
                 android:layout_height='wrap_content'
-                android:text='&#x1F4BB; Coding' />
+                android:text='&#x1F697; Driving' />
 
             <com.google.android.material.chip.Chip
                 style='@style/Widget.Material3.Chip.Filter'
                 android:layout_width='wrap_content'
                 android:layout_height='wrap_content'
-                android:text='&#x1F331; Touching grass' />
+                android:text='&#x1F4C5; In a meeting' />
 
             <com.google.android.material.chip.Chip
                 style='@style/Widget.Material3.Chip.Filter'
                 android:layout_width='wrap_content'
                 android:layout_height='wrap_content'
-                android:text='&#x1F3AE; Gaming' />
+                android:text='&#x1F374; Eating' />
 
             <com.google.android.material.chip.Chip
                 style='@style/Widget.Material3.Chip.Filter'
@@ -96,7 +96,7 @@
             android:layout_height='wrap_content'
             android:layout_marginTop='12dp'
             android:hint='Place (optional)'
-            app:helperText='Travelling + Kannur becomes "Travelling to Kannur"'>
+            app:helperText='Travelling + Goa becomes "Travelling to Goa"'>
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id='@+id/tagPlace'
@@ -114,21 +114,19 @@
             android:layout_marginTop='6dp' />
 
         <com.google.android.material.textfield.TextInputLayout
-            android:id='@+id/keyLayout'
             style='@style/Widget.Material3.TextInputLayout.OutlinedBox'
             android:layout_width='match_parent'
             android:layout_height='wrap_content'
             android:layout_marginTop='12dp'
-            android:hint='Lanyard API key'
-            app:endIconMode='password_toggle'
-            app:helperText='One time. DM the Lanyard bot .apikey. Saved only on this phone.'
-            app:helperTextEnabled='true'>
+            android:hint='Your name (optional)'
+            app:helperText='Used in the reply: "Sam is at school, pls message later."'>
 
             <com.google.android.material.textfield.TextInputEditText
-                android:id='@+id/keyField'
+                android:id='@+id/nameField'
                 android:layout_width='match_parent'
                 android:layout_height='wrap_content'
-                android:inputType='textPassword'
+                android:inputType='textPersonName|textCapWords'
+                android:maxLength='30'
                 android:maxLines='1' />
         </com.google.android.material.textfield.TextInputLayout>
     </LinearLayout>

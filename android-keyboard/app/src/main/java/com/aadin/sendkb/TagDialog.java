@@ -1,7 +1,6 @@
 package com.aadin.sendkb;
 
 import android.Manifest;
-import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Handler;
@@ -21,7 +20,6 @@ import com.google.android.material.chip.Chip;
 import com.google.android.material.chip.ChipGroup;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
-import com.google.android.material.textfield.TextInputLayout;
 
 import java.util.HashSet;
 import java.util.List;
@@ -31,10 +29,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * "Set your tag" dialog: the in-app version of the /tag Discord command.
- * Quick tag chip, custom text, place (with search + use my location), and Clear.
- * Builds the tag text the same way the bot does, then writes it to Lanyard with
- * the key you typed once.
+ * "Set your status" dialog. Pick a quick status or type your own, optionally add
+ * a place (search, recent places, or Use my location), and add your name for the
+ * reply. Saved on the phone only; nothing is sent anywhere except the place search.
  */
 final class TagDialog {
     private static final int MAX_TAG = 70;
@@ -48,17 +45,16 @@ final class TagDialog {
         final TextInputEditText custom = v.findViewById(R.id.tagCustom);
         final TextInputEditText place = v.findViewById(R.id.tagPlace);
         final ChipGroup placeChips = v.findViewById(R.id.placeChips);
-        final TextInputLayout keyLayout = v.findViewById(R.id.keyLayout);
-        final TextInputEditText keyField = v.findViewById(R.id.keyField);
-        keyLayout.setVisibility(Prefs.getKey(a) == null ? View.VISIBLE : View.GONE);
+        final TextInputEditText nameField = v.findViewById(R.id.nameField);
+        nameField.setText(Prefs.getName(a));
 
         final PlacePicker picker = new PlacePicker(a, place, placeChips);
 
         final AlertDialog d = new MaterialAlertDialogBuilder(a)
-                .setTitle("Set your tag")
+                .setTitle("Set your status")
                 .setView(v)
                 .setPositiveButton("Save", null)
-                .setNeutralButton("Clear tag", null)
+                .setNeutralButton("Clear status", null)
                 .setNegativeButton("Cancel", null)
                 .create();
         d.setOnDismissListener(x -> picker.release());
@@ -68,16 +64,25 @@ final class TagDialog {
         d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(b -> {
             String text = compose(selectedChip(chips), textOf(custom), textOf(place));
             if (text.isEmpty()) {
-                toast(a, "Pick a quick tag, type one, or add a place");
+                toast(a, "Pick a quick status, type one, or add a place");
                 return;
             }
-            run(a, d, keyLayout, keyField, text, onDone);
+            Prefs.setName(a, textOf(nameField));
+            Prefs.setTag(a, text);
+            Prefs.addRecentPlace(a, textOf(place));
+            d.dismiss();
+            toast(a, "Status set to " + text);
+            onDone.run();
         });
-        d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(b ->
-                run(a, d, keyLayout, keyField, null, onDone));
+        d.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(b -> {
+            Prefs.clearTag(a);
+            d.dismiss();
+            toast(a, "Status cleared. No auto-replies until you set one.");
+            onDone.run();
+        });
     }
 
-    /** Suggestion chips under the place field: use my location, saved places, live search. */
+    /** Suggestion chips under the place field: use my location, recent places, live search. */
     private static final class PlacePicker {
         private final ComponentActivity a;
         private final TextInputEditText field;
@@ -119,7 +124,7 @@ final class TagDialog {
             render(q, null);
             if (q.length() < 2) return;
             new Thread(() -> {
-                final List<String[]> live = PlaceFinder.search(q);
+                final List<String[]> live = PlaceFinder.search(a, q);
                 a.runOnUiThread(() -> {
                     if (seq.get() == mine && !a.isFinishing() && !a.isDestroyed()) render(q, live);
                 });
@@ -131,10 +136,10 @@ final class TagDialog {
             addChip("\uD83C\uDFAF Use my location", true, null);
             String low = q.toLowerCase(Locale.ROOT);
             Set<String> seen = new HashSet<>();
-            for (String f : PlaceFinder.FAVORITES) {
+            for (String f : Prefs.recentPlaces(a)) {
                 if (low.isEmpty() || f.toLowerCase(Locale.ROOT).contains(low)) {
                     seen.add(f.toLowerCase(Locale.ROOT));
-                    addChip("\u2B50 " + f, false, f);
+                    addChip("\uD83D\uDD52 " + f, false, f);
                 }
             }
             if (live != null) {
@@ -202,6 +207,7 @@ final class TagDialog {
                 }
                 final double lat = loc.getLatitude();
                 final double lon = loc.getLongitude();
+                Prefs.setBias(a, lat, lon);
                 new Thread(() -> {
                     final String name = PlaceFinder.reverse(lat, lon);
                     a.runOnUiThread(() -> {
@@ -217,62 +223,6 @@ final class TagDialog {
         }
     }
 
-    /** text == null means clear the tag. */
-    private static void run(final Activity a, final AlertDialog d,
-                            final TextInputLayout keyLayout, final TextInputEditText keyField,
-                            final String text, final Runnable onDone) {
-        String saved = Prefs.getKey(a);
-        final String key = saved != null ? saved : textOf(keyField);
-        if (key.isEmpty()) {
-            keyLayout.setVisibility(View.VISIBLE);
-            keyLayout.setError("Paste your Lanyard API key");
-            return;
-        }
-        keyLayout.setError(null);
-        setBusy(d, true);
-        final Context app = a.getApplicationContext();
-
-        new Thread(() -> {
-            int r = 0; // 0 ok, 1 bad key, 2 failed
-            try {
-                if (text == null) {
-                    Lanyard.clearTag(key);
-                } else {
-                    Lanyard.setTag(key, text);
-                }
-            } catch (Lanyard.BadKey e) {
-                r = 1;
-            } catch (Exception e) {
-                r = 2;
-            }
-            final int result = r;
-            a.runOnUiThread(() -> {
-                if (a.isFinishing() || a.isDestroyed()) return;
-                if (result == 0) {
-                    Prefs.setKey(app, key);
-                    d.dismiss();
-                    toast(a, text == null ? "Tag cleared. No auto-reply until you set one."
-                                          : "Tag set to " + text);
-                    onDone.run();
-                } else if (result == 1) {
-                    Prefs.clearKey(app);
-                    keyLayout.setVisibility(View.VISIBLE);
-                    keyLayout.setError("Lanyard rejected that key. Paste it again.");
-                    setBusy(d, false);
-                } else {
-                    toast(a, "Couldn't reach Lanyard. Check the internet and try again.");
-                    setBusy(d, false);
-                }
-            });
-        }).start();
-    }
-
-    private static void setBusy(AlertDialog d, boolean busy) {
-        d.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(!busy);
-        d.getButton(AlertDialog.BUTTON_NEUTRAL).setEnabled(!busy);
-        d.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(!busy);
-    }
-
     private static String selectedChip(ChipGroup chips) {
         int id = chips.getCheckedChipId();
         if (id == View.NO_ID) return "";
@@ -285,15 +235,16 @@ final class TagDialog {
         return s == null ? "" : s.toString().trim();
     }
 
-    /** Same rules as the /tag bot: custom beats preset; place adds "to"/"at". */
+    /** Custom text beats the quick status; a place adds "to" or "at". */
     static String compose(String preset, String custom, String place) {
         String text = !custom.isEmpty() ? custom : preset;
         if (!place.isEmpty()) {
             if (text.isEmpty()) {
                 text = PIN + " At " + place;
             } else {
-                String word = text.toLowerCase(Locale.ROOT).matches(".*travell?ing.*") ? "to" : "at";
-                text = text + " " + word + " " + place;
+                boolean going = text.toLowerCase(Locale.ROOT)
+                        .matches(".*(travell?ing|driving|heading|going|commuting).*");
+                text = text + (going ? " to " : " at ") + place;
             }
         }
         int points = text.codePointCount(0, text.length());

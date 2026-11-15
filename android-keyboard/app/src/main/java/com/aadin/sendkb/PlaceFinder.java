@@ -1,5 +1,7 @@
 package com.aadin.sendkb;
 
+import android.content.Context;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -15,26 +17,23 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Place suggestions, same source as the /tag bot: your saved places first, then a
- * live search on OpenStreetMap data via Photon (no API key). Also turns GPS
- * coordinates into a place name for the "Use my location" button.
+ * Place suggestions: a live search on OpenStreetMap data via Photon (free, no
+ * account or API key), ranked near where you last used "Use my location".
+ * Also turns GPS coordinates into a place name for that button.
+ * Only the text you type (or your rough coordinates) is sent, nothing else.
  */
 final class PlaceFinder {
-    /** Places you go often. They show first. Edit freely. */
-    static final String[] FAVORITES = {"Parassinikadavu", "Kannur", "Thalassery", "Kozhikode", "Home"};
-
-    // Search results near this point rank first (Kannur, Kerala).
-    private static final double BIAS_LAT = 11.8745;
-    private static final double BIAS_LON = 75.3704;
     private static final String PHOTON = "https://photon.komoot.io";
 
     private PlaceFinder() { }
 
     /** Each entry is {label shown, value to use}. Empty list if the search fails. */
-    static List<String[]> search(String q) {
+    static List<String[]> search(Context ctx, String q) {
         List<String[]> out = new ArrayList<>();
         try {
-            String url = PHOTON + "/api/?limit=8&lang=en&lat=" + BIAS_LAT + "&lon=" + BIAS_LON
+            String url = PHOTON + "/api/?limit=8&lang=en"
+                    + (Prefs.hasBias(ctx)
+                            ? "&lat=" + Prefs.biasLat(ctx) + "&lon=" + Prefs.biasLon(ctx) : "")
                     + "&q=" + URLEncoder.encode(q, "UTF-8");
             JSONArray feats = new JSONObject(get(url)).optJSONArray("features");
             if (feats == null) return out;
@@ -51,7 +50,7 @@ final class PlaceFinder {
                 out.add(new String[]{area.isEmpty() ? name : name + ", " + area, name});
             }
         } catch (Exception e) {
-            // search was slow or down: saved places still work
+            // search was slow or down: recent places still work
         }
         return out;
     }

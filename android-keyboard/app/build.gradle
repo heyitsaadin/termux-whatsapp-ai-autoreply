@@ -7,8 +7,19 @@ android {
         applicationId 'com.aadin.statusreply'
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName '3.0'
+        versionCode 4
+        versionName '4.0'
+    }
+    signingConfigs {
+        // One fixed key for every build, so a new APK installs over the old one
+        // and keeps your settings. It is public on purpose: it only signs the
+        // debug APK that GitHub Actions builds, never anything on a store.
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

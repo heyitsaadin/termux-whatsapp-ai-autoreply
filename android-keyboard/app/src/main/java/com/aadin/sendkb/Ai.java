@@ -12,9 +12,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * Asks the AI helper that runs in Termux (python main.py --standby) what to
- * say to a follow-up message. The Groq key stays in Termux; this app only
- * talks to 127.0.0.1.
+ * OPTIONAL. Asks the AI helper that runs in Termux (python main.py --standby)
+ * what to say to a follow-up message. The Groq key stays in Termux; this app
+ * only talks to 127.0.0.1. If the helper isn't running, follow-ups are simply
+ * not answered.
  */
 final class Ai {
     // must match PORT in termux/main.py
@@ -22,18 +23,27 @@ final class Ai {
 
     private Ai() { }
 
+    static String ask(String chat, String message, String status,
+                      List<String[]> history) throws Exception {
+        return ask(chat, message, status, "", "", history);
+    }
+
     /**
+     * @param name    your name for the reply (may be empty)
+     * @param notice  the fixed line this person already got
      * @param history earlier messages of this chat, oldest first, as
      *                {"them" | "me", text}; does not include `message`
      * @return the reply text, or null when the AI decided no reply is needed
      * @throws Exception when the helper is not running or fails
      */
-    static String ask(String chat, String message, String status,
-                      List<String[]> history) throws Exception {
+    static String ask(String chat, String message, String status, String name,
+                      String notice, List<String[]> history) throws Exception {
         JSONObject o = new JSONObject();
         o.put("chat", chat);
         o.put("message", message);
         o.put("status", status);
+        o.put("name", name == null ? "" : name);
+        o.put("notice", notice == null ? "" : notice);
         JSONArray h = new JSONArray();
         for (String[] turn : history) {
             JSONObject j = new JSONObject();
