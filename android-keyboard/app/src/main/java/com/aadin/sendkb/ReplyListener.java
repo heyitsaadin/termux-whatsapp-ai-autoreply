@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcelable;
+import android.os.PowerManager;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
@@ -33,11 +34,15 @@ import java.util.concurrent.Executors;
  *    status changes, the chat gets the new line right away
  *  - it only sees messages that raise a notification (not a chat that is
  *    open on screen)
+ *
+ * Screen-off: a wake lock is held while a message is being answered, and
+ * KeepAliveService keeps the process at foreground priority.
  */
 public class ReplyListener extends NotificationListenerService {
     private static final String TAG = "StatusReply";
     private static final String WHATSAPP = "com.whatsapp";
     private static final long COOLDOWN_MS = 30L * 60 * 1000;
+    private static final long WAKE_LOCK_MS = 45_000L;
 
     /** Shows a small toast for every skipped notification. Turn off once it works. */
     private static final boolean DEBUG = true;
@@ -52,6 +57,7 @@ public class ReplyListener extends NotificationListenerService {
 
     @Override public void onListenerConnected() {
         super.onListenerConnected();
+        KeepAliveService.start(this);
         if (DEBUG) toast("Status auto-reply is on");
     }
 
@@ -68,47 +74,65 @@ public class ReplyListener extends NotificationListenerService {
     }
 
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
+        if (sbn == null || !WHATSAPP.equals(sbn.getPackageName())) return;
+
+        // keep the CPU awake until the reply is out, even with the screen off
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        final PowerManager.WakeLock wl =
+                pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StatusReply:answer");
+        wl.acquire(WAKE_LOCK_MS);
+
+        boolean handedOff = false;
         try {
-            handle(sbn);
+            handedOff = handle(sbn, wl);
         } catch (Exception e) {
             Log.e(TAG, "handle failed", e);
+        } finally {
+            if (!handedOff) release(wl);
         }
     }
 
-    private void handle(StatusBarNotification sbn) {
-        if (sbn == null || !WHATSAPP.equals(sbn.getPackageName())) return;
+    /** Returns true when the work was handed to the worker (which releases the lock). */
+    private boolean handle(StatusBarNotification sbn, final PowerManager.WakeLock wl) {
         Notification n = sbn.getNotification();
-        if (n == null || n.extras == null) return;
-        if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return;
+        if (n == null || n.extras == null) return false;
+        if ((n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return false;
 
         Bundle x = n.extras;
         CharSequence title = x.getCharSequence(Notification.EXTRA_TITLE);
         final String chat = (title == null) ? "" : title.toString().trim();
-        if (chat.isEmpty()) return;
+        if (chat.isEmpty()) return false;
 
-        if (isGroup(x, chat)) { skip("group chat"); return; }
+        if (isGroup(x, chat)) { skip("group chat"); return false; }
 
         final Notification.Action action = findReplyAction(n);
-        if (action == null) { skip("no reply button (" + chat + ")"); return; }
+        if (action == null) { skip("no reply button (" + chat + ")"); return false; }
 
         String text = newestText(x);
-        if (text == null) { skip("no message text"); return; }
+        if (text == null) { skip("no message text"); return false; }
 
         // WhatsApp re-posts notifications often: handle each message once
         String sig = newestTime(x, n) + "|" + text;
-        if (sig.equals(seen.get(chat))) return;
+        if (sig.equals(seen.get(chat))) return false;
         seen.put(chat, sig);
 
         // our own reply can come back as the newest message: ignore it
-        if (text.equals(lastReplyText.get(chat))) { skip("that is our own reply"); return; }
+        if (text.equals(lastReplyText.get(chat))) { skip("that is our own reply"); return false; }
 
-        worker.execute(() -> answer(chat, action));
+        worker.execute(() -> {
+            try {
+                answer(chat, action);
+            } finally {
+                release(wl);
+            }
+        });
+        return true;
     }
 
     private void answer(String chat, Notification.Action action) {
         String msg;
         try {
-            msg = Status.currentReply();
+            msg = Status.currentReply(getApplicationContext());
         } catch (Exception e) {
             Log.w(TAG, "could not read status", e);
             toast("Auto-reply: couldn't read your status");
@@ -132,6 +156,14 @@ public class ReplyListener extends NotificationListenerService {
             lastReplyText.remove(chat);
             lastReplyTime.remove(chat);
             toast("Auto-reply to " + chat + " failed");
+        }
+    }
+
+    private static void release(PowerManager.WakeLock wl) {
+        try {
+            if (wl.isHeld()) wl.release();
+        } catch (RuntimeException ignored) {
+            // already released by its timeout
         }
     }
 
