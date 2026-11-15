@@ -67,7 +67,7 @@ def run(cmd):
     return r
 
 
-def ai_reply(key, chat, message, status, history):
+def ai_reply(key, chat, message, status, history, name="", notice=""):
     """Custom reply for a follow-up message, or None if none is needed.
 
     status:  what you are doing, e.g. "at school"
