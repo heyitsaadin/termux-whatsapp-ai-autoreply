@@ -12,7 +12,8 @@
     </queries>
 
     <!-- networkSecurityConfig: plain http is allowed ONLY to 127.0.0.1 (the Termux AI helper) -->
-    <application android:label="Status Auto-Reply"
+    <application android:allowBackup="false"
+        android:label="Status Auto-Reply"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.StatusReply"
         android:networkSecurityConfig="@xml/network_security_config">
