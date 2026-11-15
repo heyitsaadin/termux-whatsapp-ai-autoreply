@@ -82,6 +82,9 @@ public class MainActivity extends AppCompatActivity {
             loadStatus();
             loadHelper();
         });
+
+        findViewById(R.id.setTag).setOnClickListener(view ->
+                TagDialog.show(this, this::loadStatus));
     }
 
     /** Also runs when you come back from a settings screen, so the rows update. */
