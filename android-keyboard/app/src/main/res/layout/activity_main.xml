@@ -27,7 +27,7 @@
             android:layout_height='wrap_content'
             android:layout_marginTop='4dp'
             android:layout_marginBottom='24dp'
-            android:text='Answers WhatsApp using your /tag status'
+            android:text='Answers WhatsApp using the status you set'
             android:textAppearance='?attr/textAppearanceBodyLarge'
             android:textColor='?attr/colorOnSurfaceVariant' />
 
