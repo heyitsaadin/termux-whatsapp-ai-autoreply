@@ -39,8 +39,8 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int OK = 0, REQUIRED = 1, OPTIONAL = 2, CHECKING = 3;
 
-    private static final int A_PRIMARY = com.google.android.material.R.attr.colorPrimary;
-    private static final int A_ERROR = com.google.android.material.R.attr.colorError;
+    private static final int A_PRIMARY = androidx.appcompat.R.attr.colorPrimary;
+    private static final int A_ERROR = androidx.appcompat.R.attr.colorError;
     private static final int A_ON_SURFACE_VARIANT = com.google.android.material.R.attr.colorOnSurfaceVariant;
     private static final int A_PRIMARY_CONTAINER = com.google.android.material.R.attr.colorPrimaryContainer;
     private static final int A_ON_PRIMARY_CONTAINER = com.google.android.material.R.attr.colorOnPrimaryContainer;
