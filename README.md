@@ -1,165 +1,109 @@
-# termux-whatsapp-ai-autoreply
+# Status Auto-Reply
 
-A Termux Python script that:
+An Android app that answers WhatsApp messages for you while you're busy.
 
-1. reads your latest WhatsApp notification,
-2. finds the sender's number in your contacts,
-3. asks a free Groq model for a short reply,
-4. opens the chat with the reply typed in,
-5. presses **Enter** through a tiny custom keyboard (**SendKB**) so it sends.
+Set what you're doing (**At school**, **Travelling to Goa**, **In a meeting**), turn it on, and anyone who messages you gets a short note like:
 
-No ADB, no Shizuku, no root.
+> Sam is at school, pls message later.
 
-```
-notification -> Groq -> wa.me link -> chat opens -> broadcast -> SendKB presses Enter
-```
+No account, no server, no root, no Discord, no Termux. Everything is set up inside the app and stays on your phone.
 
-## Limits (read first)
+## How it works
 
-- The screen must be **on and unlocked**. A keyboard can only type into a text box that is on screen, so this is not true standby.
-- **SendKB must be the active keyboard** when the broadcast fires. It has no keys, so you cannot type normally while it is selected. Switch back with the keyboard icon in the navigation bar.
-- WhatsApp's **Enter is send** setting must be on.
-- It only sees notifications still in your shade. Do not open the chat first.
-- Group chats are not supported (the notification title is the group name).
-- The message text is sent to Groq. Skip sensitive chats.
-- The script sends messages as you with nobody checking them. Use `ALLOWED_SENDERS` in `main.py` while testing.
+- WhatsApp shows a notification with a **Reply** button when a message arrives. The app taps that button for you, so WhatsApp never has to open.
+- Each person gets the note **once** (again if your status changes, or after 30 minutes).
+- Group chats are skipped. Only one-to-one chats get a reply.
+- No status set means no replies. **Stop** pauses everything.
 
-## Setup
+## Install
 
-### 1. Termux from F-Droid
+1. Download the APK:
+   - **Releases** page: `status-auto-reply.apk`, or
+   - **Actions** tab, newest green **build-apk** run, then the `status-auto-reply-apk` file at the bottom (it is a zip, extract it).
+2. Open it and allow "install unknown apps" if Android asks.
+3. Open the app and tap **Grant** on each row:
+   - **Notification access**: required, this is how it sees messages.
+   - **Run in background**: required, so replies still go out with the screen off.
+   - **Show notification**: optional.
+4. Tap **Set status**, pick one, add a place and your name if you like, **Save**.
+5. Make sure the top card says **Auto-reply is on**.
 
-Install **Termux** and **Termux:API** from F-Droid (https://f-droid.org). Both must come from the same source. The Google Play build does not work with the API.
+> **Android 13+:** if Notification access is greyed out, open Settings, Apps, Status Auto-Reply, tap the three dots, then **Allow restricted settings**. Then try again.
 
-```
-termux-setup-storage
-pkg update
-pkg install python termux-api
-```
+Updates install over the old version and keep your settings, because every build uses the same signing key. (If you have a build from before that change, uninstall it once first.)
 
-Settings -> search "Notification access" -> turn on **Termux:API**.
+## Set status
 
-Test:
+- **Quick status**: tap one of the chips.
+- **Or type your own**: your own words win over the chip.
+- **Place**: type to search, tap a recent place, or tap **Use my location** to fill in your town. "Travelling" + "Goa" becomes "Travelling to Goa".
+- **Your name**: used in the reply. Leave it empty and the reply says "I'm at school, pls message later."
+- **Clear status** turns replies off until you set a new one.
 
-```
-termux-notification-list      # should print text starting with [
-termux-contact-list           # allow the contacts permission
-```
+## Make your own copy
 
-### 2. Groq key
+You don't need a computer, only a GitHub account.
 
-Get a free key at https://console.groq.com/keys. Store it in a file, not in the script or a screenshot:
+1. Tap **Fork** at the top of this page.
+2. In your fork, open the **Actions** tab and tap the green button to enable workflows.
+3. Actions, **build-apk**, **Run workflow**. After about two minutes the APK is at the bottom of the run.
+4. Want a download page? In your fork, **Releases**, **Draft a new release**, type a tag like `v1.0`, **Publish**. The `release-apk` workflow attaches the APK for you.
 
-```
-nano ~/.groq_key
-```
+Easy things to change (edit the file on GitHub, commit, wait for the build):
 
-Paste only the key, save with CTRL+X, Y, Enter. Never commit this file.
+| What | Where |
+|---|---|
+| App icon | replace `android-keyboard/app/src/main/res/drawable-nodpi/ic_launcher_image.png` (square PNG, 432 px, keep the logo in the middle 60%) |
+| Wording of the reply | `Status.java`, the `Info` class |
+| Quick status chips | `android-keyboard/app/src/main/res/layout/dialog_tag.xml` |
+| App id (to install next to the original) | `applicationId` in `android-keyboard/app/build.gradle` |
+| Show a toast for every skipped message | `DEBUG = true` in `ReplyListener.java` |
 
-If Groq says 404 for the model, list what your key can use and change `MODEL` in `main.py`:
+## Optional: smarter follow-ups with AI
 
-```
-curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $(cat ~/.groq_key)" -H "User-Agent: termux" | grep -o '"id":"[^"]*"'
-```
+The note above is all most people need. If someone sends a real follow-up question, a small helper in Termux can answer it using a free Groq model, and it knows your status. Without the helper, follow-ups simply get no reply.
 
-### 3. Build the SendKB keyboard APK
+1. Install **Termux** from F-Droid (https://f-droid.org). Not from Google Play.
+2. In Termux: `pkg install python git`
+3. Get a free key at https://console.groq.com/keys and save it: `nano ~/.groq_key`, paste only the key, save with CTRL+X, Y, Enter.
+4. `git clone` your fork (or this repo), then `cd` into its `termux` folder.
+5. `python main.py --standby` starts it. `python main.py --stop` stops it. The app's **AI helper** row shows whether it is running.
 
-The APK is built free by GitHub Actions.
+The helper only listens on `127.0.0.1`, so nothing else on your network can reach it. The text of follow-up messages is sent to Groq, so skip this for sensitive chats.
 
-1. Open the **Actions** tab of this repo -> **build-apk** -> **Run workflow**.
-2. When it shows a green tick (3-5 minutes), open the run and download the **SendKB** artifact. It is a zip containing `app-debug.apk`.
-3. Extract and install it. Allow "install unknown apps" if asked.
-4. Settings -> search "On-screen keyboard" / "Manage keyboards" -> turn on **Send Keyboard**.
+## Privacy
 
-### 4. WhatsApp
+- Your status, name and recent places are saved only on your phone.
+- No accounts, analytics or ads.
+- The only internet use is place search. Text you type in the Place box (or your rough coordinates, if you tap **Use my location**) goes to the free Photon service (photon.komoot.io), built on OpenStreetMap, to find place names. It is optional.
+- Location permission is only asked when you tap **Use my location**, and only coarse (town level).
 
-Settings -> Chats -> turn on **Enter is send**.
+## Limits
 
-### 5. Get the script into Termux
-
-```
-cd ~/storage/downloads
-git clone https://github.com/heyitsaadin/termux-whatsapp-ai-autoreply
-```
-
-(For a private repo, `pkg install git` first and use a GitHub token, or just download `termux/main.py` and save it in `Download/codes/python`.)
-
-Edit `termux/main.py`: set `COUNTRY_CODE`, `MY_NAME`, and `ALLOWED_SENDERS = ["Amma"]`.
-
-## Test the keyboard alone
-
-Open any WhatsApp chat, type a word, tap the keyboard icon in the nav bar and choose **Send Keyboard**, then in Termux run:
-
-```
-python main.py --send-only
-```
-
-The message should send.
-
-## Run it
-
-1. Have someone message you. **Do not open the chat.**
-2. Switch the keyboard to **Send Keyboard** (keyboard icon in nav bar, once the chat is open the first time you may need to do this before running).
-3. Run:
-
-```
-cd ~/storage/downloads/codes/python
-python main.py
-```
-
-If the keyboard is not selected at that moment, the chat opens with the reply typed in but does not send. Select the keyboard, then run `python main.py --send-only`.
-
-## Standby mode (background)
-
-```
-python main.py --standby     # start in the background
-python main.py --stop        # stop it
-tail -f ~/wa_autoreply.log   # live log
-```
-
-Checks your WhatsApp notifications every few seconds and answers each new one. After sending it returns to the home screen, because WhatsApp posts no notification for a chat that is open on screen.
-
-## Replying while a chat is open (chat watcher)
-
-SendKB also contains an accessibility service, **Send Keyboard chat watcher**. It reads the WhatsApp chat you have open, asks the standby script for a reply (over `127.0.0.1:8765`, never leaves your phone), types it into the message box and taps send. The keyboard does not need to be switched for this.
-
-Setup:
-
-1. Rebuild the APK (Actions -> build-apk) and install it. If Android reports a conflict with the installed SendKB, uninstall the old one first and re-enable the keyboard.
-2. Android 13+: Settings -> Apps -> Send Keyboard -> three dots -> **Allow restricted settings**.
-3. Settings -> Accessibility -> Installed apps -> **Send Keyboard chat watcher** -> turn on.
-4. Run `python main.py --standby`.
-
-How it behaves:
-
-- Only active while standby is running, and only inside WhatsApp.
-- Messages already on screen when you open a chat are never answered.
-- Ignored while you are scrolled up reading old messages.
-- Never overwrites text you have typed in the message box.
-- Group chats and senders outside `ALLOWED_SENDERS` are skipped.
-- The AI sees the last few messages of the chat as context.
-- If nothing happens, look for lines starting with `[app]` in the log. If WhatsApp changed its layout they list the view ids that were seen.
-
-## Commands the keyboard accepts
-
-```
-am broadcast -a com.aadin.sendkb.SEND -p com.aadin.sendkb
-am broadcast -a com.aadin.sendkb.TYPE -p com.aadin.sendkb --es text "hello"
-```
+- Works with **WhatsApp** (`com.whatsapp`), not WhatsApp Business.
+- It can only answer messages that raise a notification with a Reply button. Muted chats and chats open on screen don't.
+- WhatsApp can change how its notifications work and break this.
+- It sends real messages as you, with nobody checking. Try it with a friend first.
+- Automating WhatsApp may go against its terms of service. Use it on your own account at your own risk.
+- Battery savers from some phone makers (Xiaomi, Oppo, Vivo, Samsung and others) kill background apps. If replies stop with the screen off, turn off battery optimisation for this app and lock it in the recent apps list.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| `Could not read notifications` | Notification access for Termux:API. Toggle it off and on. |
-| `Termux:API is not yet available on Google Play` | Wrong Termux build. Reinstall from F-Droid. |
-| `INSTALL_FAILED_SHARED_USER_INCOMPATIBLE` | Uninstall every Termux app, then install Termux first, then Termux:API, from one source. |
-| AI error 404 | Model retired. List models (above) and change `MODEL`. |
-| AI error 401 | Bad or missing key in `~/.groq_key`. |
-| Chat opens but nothing sends | SendKB is not the active keyboard, or Enter is send is off. |
-| Enter adds a new line | Turn on Enter is send in WhatsApp. |
+| Nobody gets a reply | Top card must say **Auto-reply is on**, a status must be set, and **Notification access** must be on. |
+| Notification access is greyed out | Android 13+: App info, three dots, **Allow restricted settings**. |
+| Works with the screen on, not off | Set **Run in background** to unrestricted, and check your phone maker's battery settings. |
+| Replies once, then never again to the same person | That is on purpose: once per person per 30 minutes, unless your status changes. |
+| "Use my location" finds nothing | Turn on location in quick settings and try again. Or type the place. |
+| Installing says the app conflicts | Uninstall the old copy once, then install again. |
 
-## Security
+## What's in this repo
 
-Never paste your API key into a terminal command or screenshot. If a key is exposed, delete it at https://console.groq.com/keys and make a new one.
+```
+android-keyboard/   the Android app (Java, Material 3)
+termux/main.py      optional AI helper for follow-ups
+.github/workflows/  build-apk (every push) and release-apk (when you publish a release)
+```
 
-Unofficial automation of WhatsApp may conflict with its terms of service. This uses only normal intents and a keyboard, but use it on your own chats at your own risk.
+The folder is called `android-keyboard` for historical reasons: the first version was a custom keyboard. A tiny leftover keyboard, **Send Keyboard**, is still inside the app. You can ignore it and never need to enable it.
