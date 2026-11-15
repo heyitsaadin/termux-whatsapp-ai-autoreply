@@ -107,6 +107,12 @@
                 android:maxLines='1' />
         </com.google.android.material.textfield.TextInputLayout>
 
+        <com.google.android.material.chip.ChipGroup
+            android:id='@+id/placeChips'
+            android:layout_width='match_parent'
+            android:layout_height='wrap_content'
+            android:layout_marginTop='6dp' />
+
         <com.google.android.material.textfield.TextInputLayout
             android:id='@+id/keyLayout'
             style='@style/Widget.Material3.TextInputLayout.OutlinedBox'
