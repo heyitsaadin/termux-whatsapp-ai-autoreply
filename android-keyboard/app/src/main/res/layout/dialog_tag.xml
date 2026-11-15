@@ -1,0 +1,129 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ScrollView xmlns:android='http://schemas.android.com/apk/res/android'
+    xmlns:app='http://schemas.android.com/apk/res-auto'
+    android:layout_width='match_parent'
+    android:layout_height='wrap_content'>
+
+    <LinearLayout
+        android:layout_width='match_parent'
+        android:layout_height='wrap_content'
+        android:orientation='vertical'
+        android:paddingHorizontal='24dp'
+        android:paddingTop='8dp'>
+
+        <TextView
+            android:layout_width='match_parent'
+            android:layout_height='wrap_content'
+            android:text='Quick tag'
+            android:textAppearance='?attr/textAppearanceLabelLarge'
+            android:textColor='?attr/colorOnSurfaceVariant' />
+
+        <com.google.android.material.chip.ChipGroup
+            android:id='@+id/tagChips'
+            android:layout_width='match_parent'
+            android:layout_height='wrap_content'
+            android:layout_marginTop='8dp'
+            app:singleSelection='true'>
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x1F4D6; Reading' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x1F4DA; Studying' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x1F3EB; At school' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x2708;&#xFE0F; Travelling' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x1F4BB; Coding' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x1F331; Touching grass' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x1F3AE; Gaming' />
+
+            <com.google.android.material.chip.Chip
+                style='@style/Widget.Material3.Chip.Filter'
+                android:layout_width='wrap_content'
+                android:layout_height='wrap_content'
+                android:text='&#x1F634; Sleeping' />
+        </com.google.android.material.chip.ChipGroup>
+
+        <com.google.android.material.textfield.TextInputLayout
+            style='@style/Widget.Material3.TextInputLayout.OutlinedBox'
+            android:layout_width='match_parent'
+            android:layout_height='wrap_content'
+            android:layout_marginTop='16dp'
+            android:hint='Or type your own'>
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id='@+id/tagCustom'
+                android:layout_width='match_parent'
+                android:layout_height='wrap_content'
+                android:inputType='text'
+                android:maxLength='40'
+                android:maxLines='1' />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            style='@style/Widget.Material3.TextInputLayout.OutlinedBox'
+            android:layout_width='match_parent'
+            android:layout_height='wrap_content'
+            android:layout_marginTop='12dp'
+            android:hint='Place (optional)'
+            app:helperText='Travelling + Kannur becomes "Travelling to Kannur"'>
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id='@+id/tagPlace'
+                android:layout_width='match_parent'
+                android:layout_height='wrap_content'
+                android:inputType='textCapWords'
+                android:maxLength='40'
+                android:maxLines='1' />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id='@+id/keyLayout'
+            style='@style/Widget.Material3.TextInputLayout.OutlinedBox'
+            android:layout_width='match_parent'
+            android:layout_height='wrap_content'
+            android:layout_marginTop='12dp'
+            android:hint='Lanyard API key'
+            app:endIconMode='password_toggle'
+            app:helperText='One time. DM the Lanyard bot .apikey. Saved only on this phone.'
+            app:helperTextEnabled='true'>
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id='@+id/keyField'
+                android:layout_width='match_parent'
+                android:layout_height='wrap_content'
+                android:inputType='textPassword'
+                android:maxLines='1' />
+        </com.google.android.material.textfield.TextInputLayout>
+    </LinearLayout>
+</ScrollView>
