@@ -60,8 +60,8 @@ public class ReplyListener extends NotificationListenerService {
     private static final int HISTORY_MAX = 10;                       // turns the AI remembers
     private static final long WAKE_LOCK_MS = 75_000L;
 
-    /** Shows a small toast for every skipped notification. Turn off once it works. */
-    private static final boolean DEBUG = true;
+    /** Set to true to get a small toast explaining every skipped notification. */
+    private static final boolean DEBUG = false;
 
     /** Messages that never deserve an AI call. */
     private static final Set<String> FILLER = new HashSet<>(Arrays.asList(
