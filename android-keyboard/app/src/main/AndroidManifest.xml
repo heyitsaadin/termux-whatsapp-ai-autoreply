@@ -5,7 +5,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <application android:label="Status Auto-Reply">
+    <!-- networkSecurityConfig: plain http is allowed ONLY to 127.0.0.1 (the Termux AI helper) -->
+    <application android:label="Status Auto-Reply"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- tap the app icon: walks you through the 2 setup steps, then
              shows the reply everyone would get right now -->

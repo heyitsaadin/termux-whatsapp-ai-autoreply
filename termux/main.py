@@ -1,33 +1,22 @@
 #!/usr/bin/env python3
 """
-WhatsApp AI auto-reply for Termux.
+AI helper for the Status Auto-Reply app.
 
-1. Reads the latest WhatsApp notification (termux-notification-list)
-2. Looks up the sender's phone number in your contacts
-3. Asks Groq for a short reply
-4. Opens the chat with the reply typed in (wa.me link)
-5. Tells the SendKB keyboard to press Enter, which sends it
+The Android app answers the FIRST message from each person with a fixed line
+built from your /tag status. When that person sends a real follow-up, the app
+asks this script what to say. The script runs a tiny server on 127.0.0.1 that
+only the app calls, so your Groq key never leaves Termux.
 
 Usage:
-    python main.py              full run (reply to the latest message once)
-    python main.py --standby    keep running in the background and auto-reply
-                                to every new WhatsApp message that arrives
-    python main.py --stop       stop standby mode
-    python main.py --send-only  just press send (to test the keyboard)
-    python main.py --force 9876543210
-                                skip notifications, AI-reply to "hey" and send
-                                to that number right now (for testing)
-      optional: --msg "text"    the incoming message the AI replies to
-                --text "text"   send this exact text instead of an AI reply
+    python main.py --standby       start the helper in the background
+    python main.py --stop          stop it
+    python main.py --standby --fg  run in the foreground (see live output)
+    python main.py --ask "Can I talk to him?" --status "travelling"
+                                   try the AI from the terminal
+    tail -f ~/wa_autoreply.log     watch the background log
 
-Standby extras:
-    python main.py --standby --fg   run in the foreground (see live output)
-    tail -f ~/wa_autoreply.log      watch the background log
-
-While standby is on, the SendKB "chat watcher" accessibility service (see
-README) also answers messages that arrive while you have the chat OPEN, which
-notifications can't see. It talks to a tiny server this script runs on
-127.0.0.1:8765.
+The Groq key is read from GROQ_API_KEY (exported in ~/.bashrc) or from the
+file ~/.groq_key.
 """
 import json
 import os
@@ -35,118 +24,57 @@ import re
 import signal
 import subprocess
 import sys
-import threading
 import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote
 
 # ---------------- settings ----------------
-COUNTRY_CODE = "91"                      # added when a number has no country code
 MODEL = "openai/gpt-oss-120b"            # faster: "openai/gpt-oss-20b"
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MY_NAME = "Aadin"
-CHAT_LOAD_DELAY = 3.0                    # seconds to let WhatsApp open the chat
-GO_HOME_AFTER_SEND = True                # leave WhatsApp after sending, so it
-                                         # keeps posting notifications
-AFTER_SEND_DELAY = 1.5                   # seconds to let the message go out
-ALLOWED_SENDERS = []                     # e.g. ["Amma"]; empty list = anyone
-
-POLL_INTERVAL = 4                        # standby: seconds between checks
-REPLY_COOLDOWN = 20                      # standby: min seconds between replies
-                                         # to the same sender (stops bot loops)
-SERVER_PORT = 8765                       # standby: port the SendKB chat watcher
-                                         # uses (must match ChatWatcher.java)
+PORT = 8765                              # must match Ai.java in the app
 PID_FILE = os.path.expanduser("~/.wa_autoreply.pid")
 LOG_FILE = os.path.expanduser("~/wa_autoreply.log")
-STANDBY_NOTIF_ID = "wa-standby"
 STANDBY_FLAGS = ("--standby", "--stanby")   # second one forgives the typo
+NO_REPLY = "NO_REPLY"
 # -------------------------------------------
-
-# notifications that are not real messages (calls, summaries, ...)
-NOT_A_MESSAGE = re.compile(
-    r"\W*(\d+ new messages?|(missed|incoming|ongoing) (voice|video) call"
-    r"|checking for new messages)\W*", re.I)
 
 
 def load_key():
-    """Read the Groq key from the env var, or from ~/.groq_key."""
+    """Groq key: env var, then ~/.groq_key, then an export line in ~/.bashrc."""
     key = os.environ.get("GROQ_API_KEY")
     if key:
         return key.strip()
     path = os.path.expanduser("~/.groq_key")
     if os.path.exists(path):
         return open(path).read().strip()
+    for name in (".bashrc", ".bash_profile", ".profile"):
+        try:
+            with open(os.path.expanduser("~/" + name)) as f:
+                text = f.read()
+        except OSError:
+            continue
+        m = re.search(r"""GROQ_API_KEY\s*=\s*["']?([^"'\s]+)""", text)
+        if m:
+            return m.group(1)
     return None
 
 
 def run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True)
-    print(" ".join(cmd[:3]), "->", (r.stdout + r.stderr).strip()[:200])
+    print(" ".join(cmd[:3]), "->", (r.stdout + r.stderr).strip()[:200],
+          flush=True)
     return r
 
 
-def send_notification(title, message):
-    run(["termux-notification", "--title", title,
-         "--content", message, "--priority", "high"])
+def ai_reply(key, chat, message, status, history):
+    """Custom reply for a follow-up message, or None if none is needed.
 
-
-def whatsapp_msgs():
-    """All current WhatsApp message notifications, oldest first.
-    Returns None if the notification list couldn't be read."""
-    r = subprocess.run(["termux-notification-list"],
-                       capture_output=True, text=True)
-    try:
-        items = json.loads(r.stdout)
-    except json.JSONDecodeError:
-        return None
-    msgs = [n for n in items
-            if n.get("packageName") == "com.whatsapp"
-            and n.get("title") not in ("WhatsApp", "", None)
-            and not NOT_A_MESSAGE.fullmatch(n.get("content") or "")]
-    msgs.sort(key=lambda n: str(n.get("when", "")))
-    return msgs
-
-
-def latest_whatsapp_msg():
-    msgs = whatsapp_msgs()
-    if msgs is None:
-        print("Could not read notifications. Is Notification access on "
-              "for Termux:API?")
-        return None, None
-    if not msgs:
-        return None, None
-    last = msgs[-1]
-    return last["title"], last.get("content", "")
-
-
-def to_digits(number):
-    d = re.sub(r"\D", "", number)
-    if len(d) == 10:
-        d = COUNTRY_CODE + d
-    return d
-
-
-def find_number(name):
-    # unsaved contact: the notification title is already a number
-    if re.fullmatch(r"[+\d\s\-()]{7,}", name):
-        return to_digits(name)
-    r = subprocess.run(["termux-contact-list"],
-                       capture_output=True, text=True)
-    try:
-        contacts = json.loads(r.stdout or "[]")
-    except json.JSONDecodeError:
-        return None
-    for c in contacts:
-        if isinstance(c, dict) and \
-           c.get("name", "").strip().lower() == name.strip().lower():
-            return to_digits(c["number"])
-    return None
-
-
-def ai_reply(key, sender, message, history=None):
-    """history: optional earlier messages, [{"from": "me"|"them", "text": ...}]"""
+    status:  what you are doing, e.g. "at school"
+    history: earlier turns, oldest first, WITHOUT `message`:
+             [{"from": "them" | "me", "text": ...}]
+    """
     turns = []
     for h in history or []:
         if not isinstance(h, dict):
@@ -156,13 +84,25 @@ def ai_reply(key, sender, message, history=None):
             role = "assistant" if h.get("from") == "me" else "user"
             turns.append({"role": role, "content": text})
 
-    system = (f"You are {MY_NAME} replying to a WhatsApp message from "
-              f"{sender}. Reply in 1-2 short, casual sentences, in the "
-              "same language as the message. Output only the reply text.")
-    if turns:
-        system += (" The earlier messages are your recent chat with them "
-                   "(the assistant turns are what you already said): stay "
-                   "consistent and don't repeat yourself.")
+    notice = f"{MY_NAME} is {status}, pls message him later."
+    system = (
+        f"You are the auto-reply assistant for {MY_NAME}'s WhatsApp. "
+        f"{MY_NAME} can't chat right now.\n"
+        f"His current status: \"{MY_NAME} is {status}.\"\n"
+        f"This person already got the notice: \"{notice}\" and has now sent "
+        "a follow-up.\n"
+        "Decide:\n"
+        "- If the message is a greeting, filler, a repeat, spam, or needs no "
+        f"answer, output exactly {NO_REPLY}.\n"
+        "- Otherwise write ONE short reply (max 2 sentences) that takes his "
+        "status into account. Speak as his assistant in the third person "
+        f"(\"{MY_NAME} is...\", \"he...\"), in the same language as the "
+        "message.\n"
+        "- Never invent facts (where he is, when he'll be free), never "
+        "promise or agree to anything for him, never share private details. "
+        "Do not repeat the notice word for word.\n"
+        f"Output only the reply text, or {NO_REPLY}."
+    )
 
     body = json.dumps({
         "model": MODEL,
@@ -181,79 +121,64 @@ def ai_reply(key, sender, message, history=None):
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.load(resp)
         text = (data["choices"][0]["message"].get("content") or "").strip()
-        if not text:
-            print("Empty reply. Raw:", json.dumps(data)[:300])
-            return None
-        return text
     except urllib.error.HTTPError as e:
-        print("AI error:", e, e.read().decode()[:300])
+        print("AI error:", e, e.read().decode()[:300], flush=True)
+        return None
     except Exception as e:
-        print("AI error:", e)
-    return None
+        print("AI error:", e, flush=True)
+        return None
+
+    if not text or text.upper().startswith(NO_REPLY):
+        return None
+    return text[:400]
 
 
-def open_chat(phone, text=""):
-    url = f"https://wa.me/{phone}"
-    if text:
-        url += f"?text={quote(text, safe='')}"
-    run(["am", "start", "-a", "android.intent.action.VIEW",
-         "-d", url, "-p", "com.whatsapp"])
+# ---------------- the local server ----------------
 
+def make_handler(key):
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, obj, code=200):
+            data = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
-def press_send():
-    """Ask the SendKB keyboard to press Enter in the focused text box."""
-    r = subprocess.run(["am", "broadcast", "-a", "com.aadin.sendkb.SEND",
-                        "-p", "com.aadin.sendkb"],
-                       capture_output=True, text=True)
-    out = (r.stdout + r.stderr).strip()
-    # the keyboard answers with data="OK: ..." or data="FAIL: ..."
-    print("send ->", out.splitlines()[-1] if out else "no output")
+        def do_GET(self):               # open http://127.0.0.1:8765 to check it's up
+            self._send({"ok": True, "helper": "status-auto-reply"})
 
+        def do_POST(self):
+            if self.path != "/reply":
+                return self._send({"error": "not found"}, 404)
+            try:
+                size = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(size) or b"{}")
+            except ValueError:
+                return self._send({"error": "bad json"}, 400)
+            try:
+                chat = str(data.get("chat") or "").strip()
+                message = str(data.get("message") or "").strip()
+                status = str(data.get("status") or "busy").strip()
+                if not message:
+                    return self._send({"reply": None})
+                print(f"[ask] {chat} ({status}): {message}", flush=True)
+                reply = ai_reply(key, chat, message, status,
+                                 data.get("history") or [])
+                print("[ai]", reply if reply else NO_REPLY, flush=True)
+                return self._send({"reply": reply})
+            except Exception as e:
+                print("Server error:", e, flush=True)
+                return self._send({"reply": None}, 500)
 
-def leave_chat():
-    """Go back to the home screen after sending.
+        def log_message(self, *args):
+            pass                        # keep the log quiet
 
-    WhatsApp posts no notification for a chat that is open on screen, so
-    leaving it open makes standby miss every message that follows.
-    """
-    if not GO_HOME_AFTER_SEND:
-        return
-    time.sleep(AFTER_SEND_DELAY)
-    run(["am", "start", "-a", "android.intent.action.MAIN",
-         "-c", "android.intent.category.HOME"])
-
-
-def handle_message(key, sender, message):
-    """Reply to one message. Returns True if a reply was sent."""
-    if ALLOWED_SENDERS and sender not in ALLOWED_SENDERS:
-        print(f"{sender} is not in ALLOWED_SENDERS, skipping.")
-        return False
-    phone = find_number(sender)
-    if not phone:
-        print(f"No phone number for {sender} (group chat?), skipping.")
-        return False
-
-    send_notification("Automated Reply", f"Generating reply to {sender}...")
-    reply = ai_reply(key, sender, message)
-    print("AI reply:", reply)
-    if not reply:
-        return False
-
-    open_chat(phone, reply)
-    time.sleep(CHAT_LOAD_DELAY)
-    press_send()
-    leave_chat()
-    send_notification("Auto-replied", f"To {sender}: {reply}")
-    return True
-
-
-# ---------------- standby mode ----------------
-
-last_reply = {}                      # sender -> time of our last reply
+    return Handler
 
 
 def running_pid():
-    """PID of a running standby process, or None."""
+    """PID of a running helper, or None."""
     try:
         with open(PID_FILE) as f:
             pid = int(f.read().strip())
@@ -272,181 +197,54 @@ def clear_pid_file():
         pass
 
 
-def msg_sig(n):
-    """Identity of a notification, so each one is only answered once."""
-    return (n.get("title"), n.get("content"), str(n.get("when", "")))
-
-
-def reply_for_open_chat(key, sender, message, history):
-    """Reply text for a message the chat watcher saw in an OPEN chat.
-
-    Returns None to stay quiet. The chat watcher types and sends the text
-    itself, so nothing is opened or sent from here.
-    """
-    if not sender or not message:
-        return None
-    if ALLOWED_SENDERS and sender not in ALLOWED_SENDERS:
-        print(f"[open chat] {sender} is not in ALLOWED_SENDERS, skipping.",
-              flush=True)
-        return None
-    if not find_number(sender):
-        print(f"[open chat] No phone number for {sender} (group chat?), "
-              "skipping.", flush=True)
-        return None
-
-    # same loop guard as the notification path; waiting is fine here because
-    # the watcher just holds the request open
-    wait = REPLY_COOLDOWN - (time.time() - last_reply.get(sender, 0))
-    if wait > 0:
-        time.sleep(wait)
-
-    print(f"[open chat] {sender}: {message}", flush=True)
-    send_notification("Automated Reply", f"Generating reply to {sender}...")
-    reply = ai_reply(key, sender, message, history)
-    print("AI reply:", reply, flush=True)
-    if reply:
-        last_reply[sender] = time.time()
-        send_notification("Replying in open chat", f"{sender}: {reply}")
-    return reply
-
-
-def start_reply_server(key):
-    """Tiny local server the SendKB chat watcher talks to.
-
-    POST /reply {sender, message, history} -> {"reply": text or null}
-    POST /log   {text}                     -> prints it to the log
-    """
-    class Handler(BaseHTTPRequestHandler):
-        def _send(self, obj, code=200):
-            data = json.dumps(obj).encode()
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def do_POST(self):
-            try:
-                size = int(self.headers.get("Content-Length", 0))
-                data = json.loads(self.rfile.read(size) or b"{}")
-            except ValueError:
-                return self._send({"error": "bad json"}, 400)
-            try:
-                if self.path == "/log":
-                    print("[app]", data.get("text", ""), flush=True)
-                    return self._send({"ok": True})
-                if self.path == "/reply":
-                    reply = reply_for_open_chat(
-                        key,
-                        str(data.get("sender") or "").strip(),
-                        str(data.get("message") or "").strip(),
-                        data.get("history") or [])
-                    return self._send({"reply": reply})
-            except Exception as e:
-                print("Server error:", e, flush=True)
-                return self._send({"reply": None}, 500)
-            self._send({"error": "not found"}, 404)
-
-        def log_message(self, *args):
-            pass                     # keep the log quiet
-
-    server = ThreadingHTTPServer(("127.0.0.1", SERVER_PORT), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
-
-
-def standby_loop():
-    """Watch for new WhatsApp notifications and auto-reply to each one."""
+def serve():
+    """Run the helper server (foreground)."""
     key = load_key()
     if not key:
-        sys.exit("No Groq key. Put it in ~/.groq_key (see README).")
+        sys.exit("No Groq key. Export GROQ_API_KEY in ~/.bashrc or put it in "
+                 "~/.groq_key.")
     other = running_pid()
     if other and other != os.getpid():
-        sys.exit(f"Standby already running (PID {other}). "
-                 "Stop it with: python main.py --stop")
+        sys.exit(f"Already running (PID {other}). Stop it with: "
+                 "python main.py --stop")
+
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(key))
+    except OSError as e:
+        sys.exit(f"Could not listen on 127.0.0.1:{PORT}: {e}")
 
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-
-    run(["termux-wake-lock"])        # keep the CPU awake while on standby
-    run(["termux-notification", "--id", STANDBY_NOTIF_ID,
-         "--title", "WhatsApp AI standby",
-         "--content", "Listening for new messages",
-         "--ongoing", "--priority", "low"])
-
-    server = None
-    try:
-        server = start_reply_server(key)
-        print(f"Open-chat server on 127.0.0.1:{SERVER_PORT}", flush=True)
-    except OSError as e:
-        print(f"Could not start the open-chat server ({e}); replies to "
-              "open chats are off, notifications still work.", flush=True)
-    print(f"Standby on (PID {os.getpid()}), checking every {POLL_INTERVAL}s",
-          flush=True)
-
-    # whatever is already in the tray now is old news: don't answer it
-    seen = {msg_sig(n) for n in (whatsapp_msgs() or [])}
-    read_ok = True
+    run(["termux-wake-lock"])            # keep Termux awake with the screen off
+    print(f"AI helper on 127.0.0.1:{PORT} (PID {os.getpid()})", flush=True)
 
     try:
-        while True:
-            time.sleep(POLL_INTERVAL)
-            try:
-                items = whatsapp_msgs()
-                if items is None:
-                    if read_ok:
-                        print("Could not read notifications. Is Notification "
-                              "access on for Termux:API?", flush=True)
-                    read_ok = False
-                    continue
-                read_ok = True
-
-                # newest unseen message per sender
-                fresh = {}
-                for n in items:
-                    if msg_sig(n) not in seen and n.get("content"):
-                        fresh[n["title"]] = n
-
-                deferred = set()
-                for sender, n in fresh.items():
-                    if time.time() - last_reply.get(sender, 0) < REPLY_COOLDOWN:
-                        deferred.add(msg_sig(n))   # try again after cooldown
-                        continue
-                    print(f"New message from {sender}: {n['content']}",
-                          flush=True)
-                    if handle_message(key, sender, n["content"]):
-                        last_reply[sender] = time.time()
-
-                seen = {msg_sig(n) for n in items} - deferred
-            except Exception as e:
-                print("Standby error:", e, flush=True)
+        server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        if server:
-            server.shutdown()
-            server.server_close()
+        server.server_close()
         run(["termux-wake-unlock"])
-        run(["termux-notification-remove", STANDBY_NOTIF_ID])
         clear_pid_file()
-        print("Standby stopped.", flush=True)
+        print("AI helper stopped.", flush=True)
 
 
 def start_background():
-    """Launch standby mode detached from this terminal."""
+    """Launch the helper detached from this terminal."""
     pid = running_pid()
     if pid:
-        sys.exit(f"Standby already running (PID {pid}). "
-                 "Stop it with: python main.py --stop")
+        sys.exit(f"Already running (PID {pid}). Stop it with: "
+                 "python main.py --stop")
     if not load_key():
-        sys.exit("No Groq key. Put it in ~/.groq_key (see README).")
+        sys.exit("No Groq key. Export GROQ_API_KEY in ~/.bashrc or put it in "
+                 "~/.groq_key.")
     log = open(LOG_FILE, "a")
     p = subprocess.Popen(
         [sys.executable, "-u", os.path.abspath(__file__), "--standby", "--fg"],
         stdout=log, stderr=log, stdin=subprocess.DEVNULL,
         start_new_session=True)
-    print(f"Standby started in the background (PID {p.pid}).")
+    print(f"AI helper started in the background (PID {p.pid}).")
     print(f"Logs: {LOG_FILE}")
     print("Stop it with: python main.py --stop")
 
@@ -454,12 +252,10 @@ def start_background():
 def stop_background():
     pid = running_pid()
     if not pid:
-        sys.exit("Standby isn't running.")
+        sys.exit("The AI helper isn't running.")
     os.kill(pid, signal.SIGTERM)
-    print(f"Stopped standby (PID {pid}).")
+    print(f"Stopped the AI helper (PID {pid}).")
 
-
-# ---------------- testing helpers ----------------
 
 def get_opt(flag):
     """Return the value after `flag` in argv, or None if flag isn't used."""
@@ -471,60 +267,30 @@ def get_opt(flag):
     return sys.argv[i + 1]
 
 
-def force_send(number, incoming, literal_text):
-    """Testing mode: skip notifications and send to `number` right now."""
-    phone = to_digits(number)
-    if len(phone) < 8:
-        sys.exit(f"'{number}' doesn't look like a valid number.")
-
-    if literal_text:
-        reply = literal_text
-    else:
-        key = load_key()
-        if not key:
-            sys.exit("No Groq key. Put it in ~/.groq_key (see README).")
-        reply = ai_reply(key, number, incoming)
-    print("Reply:", reply)
-    if not reply:
-        sys.exit("No reply generated.")
-
-    open_chat(phone, reply)
-    time.sleep(CHAT_LOAD_DELAY)
-    press_send()
-    leave_chat()
-
-
 def main():
     if "--stop" in sys.argv:
         stop_background()
         return
 
-    if "--send-only" in sys.argv:
-        press_send()
-        return
-
-    number = get_opt("--force")
-    if number:
-        force_send(number, get_opt("--msg") or "hey", get_opt("--text"))
+    question = get_opt("--ask")
+    if question:
+        key = load_key()
+        if not key:
+            sys.exit("No Groq key. Export GROQ_API_KEY in ~/.bashrc or put "
+                     "it in ~/.groq_key.")
+        reply = ai_reply(key, "test", question,
+                         get_opt("--status") or "busy", [])
+        print(reply if reply else f"({NO_REPLY}: the AI would stay quiet)")
         return
 
     if any(f in sys.argv for f in STANDBY_FLAGS):
         if "--fg" in sys.argv:
-            standby_loop()
+            serve()
         else:
             start_background()
         return
 
-    key = load_key()
-    if not key:
-        sys.exit("No Groq key. Put it in ~/.groq_key (see README).")
-
-    sender, message = latest_whatsapp_msg()
-    print("From:", sender, "| Message:", message)
-    if not sender or not message:
-        sys.exit("No WhatsApp message found.")
-
-    handle_message(key, sender, message)
+    print(__doc__)
 
 
 if __name__ == "__main__":

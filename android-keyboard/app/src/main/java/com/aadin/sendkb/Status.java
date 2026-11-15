@@ -12,14 +12,15 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 /**
- * Builds the one canned reply from the status tag that the discord-status-web
- * page shows. That tag is set with the /tag Discord command and stored in
- * Lanyard, which anyone can read:
+ * Reads the status tag that the discord-status-web page shows. That tag is
+ * set with the /tag Discord command and stored in Lanyard, which anyone can
+ * read:
  *
  *   https://api.lanyard.rest/v1/users/<id>   ->   data.kv.tag
  *
- * Tag "At school"  ->  "Aadin is at school, pls message him later."
- * No tag (/tag clear) ->  no reply at all, which is the off switch.
+ * Tag "At school"  ->  what = "at school"
+ *                      reply = "Aadin is at school, pls message him later."
+ * No tag (/tag clear) ->  null, which means: no auto-reply at all.
  *
  * With the screen off the network can be flaky, so a failed lookup is retried
  * and, if it still fails, the last answer we got is used for up to 2 hours.
@@ -35,20 +36,31 @@ final class Status {
     private static final long MAX_STALE_MS = 2L * 60 * 60 * 1000;
     private static final String TAG = "StatusReply";
 
+    /** What you are doing right now, and the fixed line built from it. */
+    static final class Info {
+        final String what;    // "at school"
+        final String reply;   // "Aadin is at school, pls message him later."
+
+        Info(String what) {
+            this.what = what;
+            this.reply = MY_NAME + " is " + what + ", pls message him later.";
+        }
+    }
+
     private Status() { }
 
     /**
-     * The reply everyone gets right now, or null when no tag is set.
+     * The current status, or null when no tag is set.
      * Throws only if Lanyard can't be reached and there is no recent answer
-     * saved (so we never send a wrong reply from old data).
+     * saved (so we never reply from old data).
      */
-    static String currentReply(Context ctx) throws Exception {
+    static Info current(Context ctx) throws Exception {
         Exception failure = null;
         for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
             try {
-                String reply = buildReply(fetchTag());
-                save(ctx, reply);
-                return reply;
+                Info info = infoFor(fetchTag());
+                save(ctx, info);
+                return info;
             } catch (Exception e) {
                 failure = e;
                 Log.w(TAG, "status lookup failed (attempt " + (attempt + 1) + ")", e);
@@ -66,23 +78,28 @@ final class Status {
         SharedPreferences sp = ctx.getSharedPreferences("status", Context.MODE_PRIVATE);
         if (sp.contains("time")
                 && System.currentTimeMillis() - sp.getLong("time", 0) < MAX_STALE_MS) {
-            String saved = sp.getString("reply", "");
             Log.w(TAG, "offline, using the last known status");
-            return saved.isEmpty() ? null : saved;
+            String saved = sp.getString("what", "");
+            return saved.isEmpty() ? null : new Info(saved);
         }
         throw failure;
     }
 
-    private static String buildReply(String tag) {
-        if (tag == null) return null;
-        String what = clean(tag);
-        if (what.isEmpty()) return null;
-        return MY_NAME + " is " + what + ", pls message him later.";
+    /** Just the fixed line (used by the app icon check). */
+    static String currentReply(Context ctx) throws Exception {
+        Info info = current(ctx);
+        return info == null ? null : info.reply;
     }
 
-    private static void save(Context ctx, String reply) {
+    private static Info infoFor(String tag) {
+        if (tag == null) return null;
+        String what = clean(tag);
+        return what.isEmpty() ? null : new Info(what);
+    }
+
+    private static void save(Context ctx, Info info) {
         ctx.getSharedPreferences("status", Context.MODE_PRIVATE).edit()
-                .putString("reply", reply == null ? "" : reply)
+                .putString("what", info == null ? "" : info.what)
                 .putLong("time", System.currentTimeMillis())
                 .apply();
     }
