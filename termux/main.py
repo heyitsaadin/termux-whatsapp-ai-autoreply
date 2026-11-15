@@ -32,7 +32,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # ---------------- settings ----------------
 MODEL = "openai/gpt-oss-120b"            # faster: "openai/gpt-oss-20b"
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MY_NAME = "Aadin"
 PORT = 8765                              # must match Ai.java in the app
 PID_FILE = os.path.expanduser("~/.wa_autoreply.pid")
 LOG_FILE = os.path.expanduser("~/wa_autoreply.log")
