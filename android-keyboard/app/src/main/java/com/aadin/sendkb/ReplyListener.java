@@ -32,7 +32,7 @@ import java.util.concurrent.Executors;
  * the notification's own "Reply" button.
  *
  *  1st message from someone (or status changed, or 30 min passed):
- *      the fixed line, e.g. "Aadin is at school, pls message him later."
+ *      the fixed line, e.g. "Sam is at school, pls message later."
  *  Later messages from the same person:
  *      spam / filler is ignored; a real message goes to the AI helper in
  *      Termux, which knows your status and the chat so far, and either
